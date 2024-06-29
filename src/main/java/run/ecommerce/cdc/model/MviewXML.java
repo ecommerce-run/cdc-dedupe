@@ -38,8 +38,8 @@ public class MviewXML {
                 List<Element[]> storage = new ArrayList<>();
                 DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
 
-                DocumentBuilder builder = null;
-                Document doc = null;
+                DocumentBuilder builder;
+                Document doc;
                 try {
                     builder = factory.newDocumentBuilder();
                     doc = builder.parse(file);

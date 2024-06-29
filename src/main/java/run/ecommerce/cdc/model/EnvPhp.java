@@ -12,7 +12,6 @@ import org.json.JSONObject;
 @Component
 public class EnvPhp {
 
-
     protected JSONObject phpConfig;
     public void init(String rootDirectoryPath) throws IOException, InterruptedException {
         var root = new File(rootDirectoryPath);

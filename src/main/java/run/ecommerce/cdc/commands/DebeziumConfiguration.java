@@ -1,9 +1,7 @@
 package run.ecommerce.cdc.commands;
 
 import jakarta.annotation.Resource;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ResourceLoader;
-import org.springframework.shell.command.CommandRegistration;
 import org.springframework.shell.command.annotation.Option;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
@@ -14,19 +12,16 @@ import run.ecommerce.cdc.model.MviewXML;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @ShellComponent
 public class DebeziumConfiguration {
 
-//    @Option(longNames = "cwd", defaultValue = "./", description = "Path to the root folder")
-//    private String cwd = "./";
-
-    @Autowired
     protected EnvPhp env;
-    @Autowired
     protected MviewXML mviewConfig;
-
+    DebeziumConfiguration(EnvPhp env, MviewXML mviewConfig) {
+        this.env = env;
+        this.mviewConfig = mviewConfig;
+    }
     @ShellMethod(key = "generate", value = "generate debezium config")
     public String generate(
             @Option(longNames = {"cwd"}, defaultValue = "./") String cwd
@@ -35,9 +30,7 @@ public class DebeziumConfiguration {
         try {
             env.init(cwd);
             mviewConfig.init(cwd);
-        } catch (IOException e) {
-            return e.getMessage();
-        } catch (InterruptedException e) {
+        } catch (IOException | InterruptedException e) {
             return e.getMessage();
         }
 
