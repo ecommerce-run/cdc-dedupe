@@ -1,0 +1,13 @@
+spring:
+  main:
+    banner-mode: off
+  application:
+    name: cdc
+  shell:
+    interactive:
+      enabled: true
+    script:
+      enabled: true
+logging:
+  level:
+    root: off
