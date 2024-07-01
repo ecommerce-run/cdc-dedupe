@@ -34,6 +34,7 @@ dependencies {
 //    implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.shell:spring-shell-starter")
     implementation("org.json:json:20240303")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
 
     compileOnly("org.projectlombok:lombok")
     runtimeOnly("com.mysql:mysql-connector-j")

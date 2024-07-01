@@ -14,19 +14,21 @@ import java.nio.file.Files;
 import java.util.*;
 
 @ShellComponent
-public class DebeziumConfiguration {
+public class DebeziumConfiguration extends BaseCommand {
 
-    protected EnvPhp env;
-    protected MviewXML mviewConfig;
     DebeziumConfiguration(EnvPhp env, MviewXML mviewConfig) {
-        this.env = env;
-        this.mviewConfig = mviewConfig;
+        super(env, mviewConfig);
     }
+
     @ShellMethod(key = "generate", value = "generate debezium config")
     public String generate(
             @Option(longNames = {"cwd"}, defaultValue = "./") String cwd
     ) {
 
+        var initError = init(cwd);
+        if(initError != null) {
+            return initError;
+        }
         try {
             env.init(cwd);
             mviewConfig.init(cwd);

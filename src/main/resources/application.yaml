@@ -8,6 +8,11 @@ spring:
       enabled: true
     script:
       enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DB:0}
 logging:
   level:
     root: off
