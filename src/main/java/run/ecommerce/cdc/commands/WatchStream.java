@@ -29,8 +29,6 @@ public class WatchStream extends BaseCommand {
 
     final static int SOURCE_READ_COUNT = 100;
     final static int SOURCE_READ_TIME = 1000;
-    final static int BUFFER_SIZE = 1000;
-    final static Duration BUFFER_TIME = Duration.ofSeconds(1);
 
     final static int DEDUPLICATION_SIZE = 10000;
     final static Duration DEDUPLICATION_TIME = Duration.ofSeconds(5);
@@ -40,8 +38,8 @@ public class WatchStream extends BaseCommand {
 
 
 
-    private ReactiveRedisOperations<String, String> redisOperations;
-    private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
+    private final ReactiveRedisOperations<String, String> redisOperations;
+    private final ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
     WatchStream(
             EnvPhp env,
             MviewXML mviewConfig,
@@ -69,13 +67,10 @@ public class WatchStream extends BaseCommand {
         if(initError != null) {
             return initError;
         }
-        var dbName = (String) env.getValueByPath("db/connection/default/dbname");
+
         this.streamPrefix = streamPrefix;
         this.group = group;
         this.consumer = consumer;
-
-        // Create a StreamReceiver instance
-        var consumerInstance = Consumer.from(group, consumer);
 
         var targetSinks = generateSinks(mviewConfig);
         var targetFluxes = generateTargetStreams(targetSinks);
@@ -124,9 +119,6 @@ public class WatchStream extends BaseCommand {
             var targetFlux = flux
                     .doOnNext(unifiedMessage -> {
                     })
-                    .map(unifiedMessage -> {
-                        return unifiedMessage;
-                    })
                     .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
                     .map(recordList -> {
                         var nonDuplicateCollection = recordList.stream()
@@ -149,10 +141,7 @@ public class WatchStream extends BaseCommand {
                                 .subscribe();
                         return recordList;
                     })
-                    .flatMap(Flux::fromIterable)
-                    .map(unifiedMessage -> {
-                        return unifiedMessage;
-                    });
+                    .flatMap(Flux::fromIterable);
             fluxes.put(record.getKey(), targetFlux);
         }
         return fluxes;
@@ -165,7 +154,7 @@ public class WatchStream extends BaseCommand {
         for (var streamRecord: mviewConfig.storage.entrySet()) {
 
             var streamName = streamPrefix + streamRecord.getKey();
-            var fieldToMap = streamRecord.getValue().entrySet().stream().toList().get(0).getKey();
+            var fieldToMap = streamRecord.getValue().entrySet().stream().toList().getFirst().getKey();
 
             redisOperations.opsForStream().createGroup(streamName, ReadOffset.from("0-0"), group).subscribe();
 
@@ -184,7 +173,7 @@ public class WatchStream extends BaseCommand {
 
             var unifiedFlux =  messages
                     .map( record -> {
-                        var value = new JSONObject(record.getValue().entrySet().stream().toList().get(0).getValue());
+                        var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
                         var idToPass = value.getJSONObject("after").get(fieldToMap);
 
                         return new UnifiedMessage(record.getId(), streamRecord.getKey(), (Integer) idToPass);
@@ -202,6 +191,7 @@ public class WatchStream extends BaseCommand {
                         }
                         return record;
                     })
+                    .publishOn(Schedulers.boundedElastic())
                     .map(record -> {
                         redisOperations.opsForStream().acknowledge(streamName, group, record.id()).subscribe();
                         return record;
