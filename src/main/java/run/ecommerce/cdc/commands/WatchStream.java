@@ -4,7 +4,6 @@ package run.ecommerce.cdc.commands;
 import lombok.SneakyThrows;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.core.ReactiveRedisOperations;
@@ -19,11 +18,9 @@ import run.ecommerce.cdc.model.EnvPhp;
 import run.ecommerce.cdc.model.MviewXML;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @ShellComponent
@@ -38,19 +35,27 @@ public class WatchStream extends BaseCommand {
     final static int DEDUPLICATION_SIZE = 10000;
     final static Duration DEDUPLICATION_TIME = Duration.ofSeconds(5);
 
+    final static int TARGET_BUFFER_SIZE = 1000;
+    final static Duration TARGET_BUFFER_TIME = Duration.ofSeconds(1);
 
-    // inject the actual template
-    @Autowired
+
+
     private ReactiveRedisOperations<String, String> redisOperations;
-    @Autowired
     private ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
-    WatchStream(EnvPhp env, MviewXML mviewConfig) {
+    WatchStream(
+            EnvPhp env,
+            MviewXML mviewConfig,
+            ReactiveRedisOperations<String, String> redisOperations,
+            ReactiveRedisConnectionFactory reactiveRedisConnectionFactory) {
         super(env, mviewConfig);
+        this.redisOperations = redisOperations;
+        this.reactiveRedisConnectionFactory = reactiveRedisConnectionFactory;
     }
 
     protected String streamPrefix = "";
     protected String group = "";
     protected String consumer = "";
+    protected String targetPrefix = "target.";
 
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
@@ -73,7 +78,7 @@ public class WatchStream extends BaseCommand {
         var consumerInstance = Consumer.from(group, consumer);
 
         var targetSinks = generateSinks(mviewConfig);
-        var targetFluxes = generateStreams(targetSinks);
+        var targetFluxes = generateTargetStreams(targetSinks);
         System.out.println("Starting...");
         for(var fluxRec: targetFluxes.entrySet()) {
             fluxRec.getValue().subscribe();
@@ -88,10 +93,7 @@ public class WatchStream extends BaseCommand {
         System.out.println("Started");
 
         CountDownLatch latch = new CountDownLatch(1);
-
         latch.await();
-
-
         return "";
     }
 
@@ -105,33 +107,53 @@ public class WatchStream extends BaseCommand {
         return sinks;
     }
 
-    protected Map<String,Flux<UnifiedMessage>> generateStreams(
+    protected Map<String,Flux<UnifiedMessage>> generateTargetStreams(
             Map<String, Sinks.Many<UnifiedMessage>> sinks
     ) {
         var fluxes = new HashMap<String,Flux<UnifiedMessage>>();
         for (var record: sinks.entrySet()) {
             var sink = sinks.get(record.getKey());
             var flux = sink.asFlux();
+
+            var targetStreamName = targetPrefix+record.getKey();
+            //Create outgoing stream
+            redisOperations.opsForStream()
+                    .add(targetStreamName,Map.of("ids","[]"))
+                    .subscribe();
+
             var targetFlux = flux
                     .doOnNext(unifiedMessage -> {
                     })
                     .map(unifiedMessage -> {
-                        System.out.println("For " + record.getKey() + " got " +unifiedMessage);
-
+//                        System.out.println("For " + record.getKey() + " got " +unifiedMessage);
                         return unifiedMessage;
-                    }).bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
+                    })
+                    .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
                     .map(recordList -> {
-                        var targetMessage =  recordList.stream()
+                        var nonDuplicateCollection = recordList.stream()
+                                .collect(Collectors.toMap(UnifiedMessage::targetId, Function.identity(), (a, b) -> a))
+                                .values();
+
+                        return nonDuplicateCollection;
+                    })
+                    .flatMap(Flux::fromIterable)
+                    .bufferTimeout(TARGET_BUFFER_SIZE, TARGET_BUFFER_TIME)
+                    .publishOn(Schedulers.boundedElastic())
+                    .map(recordList -> {
+                        var ids = new JSONArray(
+                            recordList.stream()
                                 .map(UnifiedMessage::targetId)
-                                .distinct()
-                                .toList();
-
-                        JSONArray jsonArray = new JSONArray(targetMessage);
-
-
+                                .toList()
+                        ).toString();
+                        redisOperations.opsForStream()
+                                .add(targetStreamName,Map.of("ids",ids))
+                                .subscribe();
                         return recordList;
                     })
-                    .flatMap(list -> Flux.fromIterable(list));
+                    .flatMap(Flux::fromIterable)
+                    .map(unifiedMessage -> {
+                        return unifiedMessage;
+                    });
             fluxes.put(record.getKey(), targetFlux);
         }
         return fluxes;
@@ -163,20 +185,21 @@ public class WatchStream extends BaseCommand {
 
             var unifiedFlux =  messages
                     .map( record -> {
-                        System.out.println(record);
-                        var value = new JSONObject(record.getValue().entrySet().stream().toList().get(0).getKey());
-                        var idToPass = value.get(fieldToMap);
+
+//                        System.out.println(record);
+                        var value = new JSONObject(record.getValue().entrySet().stream().toList().get(0).getValue());
+                        var idToPass = value.getJSONObject("after").get(fieldToMap);
 
                         return new UnifiedMessage(record.getId(), streamRecord.getKey(), (Integer) idToPass);
                     })
                     .map( record -> {
                         for (var columRecordMap : mviewConfig.storage.get(streamRecord.getKey()).entrySet()){
                             for (var processorName: columRecordMap.getValue()) {
-                                System.out.println("Passed to " + processorName + " " + record);
+//                                System.out.println("Passed to " + processorName + " " + record);
                                 var targetSink =targetSinks.get(processorName);
                                 var res =  targetSink.tryEmitNext(record);
                                 if (res.isSuccess()) {
-                                    System.out.println("Message processed by target Flux: " + record);
+//                                    System.out.println("Message processed by target Flux: " + record);
                                 } else {
                                     System.out.println("Message NOT processed by target Flux: " + record);
                                 }
