@@ -125,7 +125,6 @@ public class WatchStream extends BaseCommand {
                     .doOnNext(unifiedMessage -> {
                     })
                     .map(unifiedMessage -> {
-//                        System.out.println("For " + record.getKey() + " got " +unifiedMessage);
                         return unifiedMessage;
                     })
                     .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
@@ -185,8 +184,6 @@ public class WatchStream extends BaseCommand {
 
             var unifiedFlux =  messages
                     .map( record -> {
-
-//                        System.out.println(record);
                         var value = new JSONObject(record.getValue().entrySet().stream().toList().get(0).getValue());
                         var idToPass = value.getJSONObject("after").get(fieldToMap);
 
@@ -195,11 +192,9 @@ public class WatchStream extends BaseCommand {
                     .map( record -> {
                         for (var columRecordMap : mviewConfig.storage.get(streamRecord.getKey()).entrySet()){
                             for (var processorName: columRecordMap.getValue()) {
-//                                System.out.println("Passed to " + processorName + " " + record);
                                 var targetSink =targetSinks.get(processorName);
                                 var res =  targetSink.tryEmitNext(record);
                                 if (res.isSuccess()) {
-//                                    System.out.println("Message processed by target Flux: " + record);
                                 } else {
                                     System.out.println("Message NOT processed by target Flux: " + record);
                                 }
@@ -218,7 +213,5 @@ public class WatchStream extends BaseCommand {
         }
         return streamConsumers;
     }
-
-
 }
 
