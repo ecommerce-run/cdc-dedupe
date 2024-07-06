@@ -26,7 +26,6 @@ import java.util.stream.Collectors;
 @ShellComponent
 public class WatchStream extends BaseCommand {
 
-
     final static int SOURCE_READ_COUNT = 100;
     final static int SOURCE_READ_TIME = 1000;
 
@@ -93,6 +92,12 @@ public class WatchStream extends BaseCommand {
     }
 
 
+    /**
+     * Prepare map of all the Skinks(Processing entry points) destinations
+     *
+     * @param configuration {@link MviewXML}
+     * @return {@link Map<String,Sinks.Many<UnifiedMessage>>}
+     */
     protected Map<String, Sinks.Many<UnifiedMessage>> generateSinks(MviewXML configuration) {
         var sinks = new HashMap<String, Sinks.Many<UnifiedMessage>>();
         for (var processor: configuration.indexerMap.entrySet()) {
@@ -101,6 +106,7 @@ public class WatchStream extends BaseCommand {
         }
         return sinks;
     }
+
 
     protected Map<String,Flux<UnifiedMessage>> generateTargetStreams(
             Map<String, Sinks.Many<UnifiedMessage>> sinks
@@ -147,6 +153,12 @@ public class WatchStream extends BaseCommand {
         return fluxes;
     }
 
+    /**
+     * Generate Source job pipelines that are passing data to Target pipelines.
+     *
+     * @param targetSinks map of all the target Sinks
+     * @return {@link List<Flux<UnifiedMessage>>} of source stream processors
+     */
     protected List<Flux<UnifiedMessage>> generateSourceStreamConsumers(
             Map<String, Sinks.Many<UnifiedMessage>> targetSinks
     ) {
