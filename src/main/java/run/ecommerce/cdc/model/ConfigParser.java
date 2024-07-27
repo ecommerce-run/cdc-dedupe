@@ -1,6 +1,7 @@
 package run.ecommerce.cdc.model;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -43,8 +44,8 @@ public class ConfigParser {
     public static Config loadConfig(String configPath) throws IOException {
 
         ObjectMapper mapper = new ObjectMapper();
-        if (configPath.endsWith('.yaml')) {
-            mapper = new ObjectMapper(new YamlFactory());
+        if (configPath.endsWith(".yaml")) {
+            mapper = new ObjectMapper(new YAMLFactory());
         }
         return mapper.readValue(new File(configPath), Config.class);
     }
