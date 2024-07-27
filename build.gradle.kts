@@ -36,6 +36,9 @@ dependencies {
     implementation("org.json:json:20240303")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 
+    implementation("com.fasterxml.jackson.core:jackson-databind")
+    implementation("com.fasterxml.jackson.core:jackson-databind-yaml")
+
     compileOnly("org.projectlombok:lombok")
     runtimeOnly("com.mysql:mysql-connector-j")
     annotationProcessor("org.projectlombok:lombok")

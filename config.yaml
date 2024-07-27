@@ -1,0 +1,134 @@
+---
+source:
+  prefix: m2.m2.
+  group: cdc
+  consumer: cdc
+  connection:
+    host: 127.0.0.1
+    port: '6389'
+    db: '2'
+buffers:
+  source:
+    size: 1000
+    time: 1000
+  dedupe:
+    size: 100000
+    time: 5000
+  target:
+    size: 1000
+    time: 1000
+target:
+  prefix: m2.m2.
+  connection:
+    host: 127.0.0.1
+    port: '6389'
+    db: '2'
+mapping:
+  # Indexers source table, column to pass to target, target.
+  cataloginventory_stock_item:
+    product_id:
+      - cataloginventory_stock
+  catalog_product_entity:
+    entity_id:
+      - catalogsearch_fulltext
+      - catalog_product_flat
+      - catalog_product_price
+      - catalogrule_product
+  cms_page:
+    page_id:
+      - cms_page_grid
+  catalog_product_website:
+    product_id:
+      - catalogsearch_fulltext
+      - catalog_product_category
+      - catalog_product_price
+  catalog_category_entity_decimal:
+    entity_id:
+      - catalog_category_flat
+  catalog_product_super_link:
+    product_id:
+      - catalogsearch_fulltext
+  catalog_product_entity_media_gallery_value:
+    entity_id:
+      - catalog_product_flat
+  catalog_category_entity_text:
+    entity_id:
+      - catalog_category_flat
+  catalog_product_entity_tier_price:
+    entity_id:
+      - catalog_product_flat
+      - catalog_product_price
+      - catalogrule_product
+  catalog_product_link:
+    product_id:
+      - catalogsearch_fulltext
+      - catalog_product_price
+      - catalog_product_attribute
+      - cataloginventory_stock
+      - catalogrule_product
+  catalog_category_product:
+    product_id:
+      - catalogsearch_fulltext
+      - catalog_product_category
+      - catalogrule_product
+  catalog_category_entity_int:
+    entity_id:
+      - catalog_category_flat
+      - catalog_category_product
+  catalogrule:
+    rule_id:
+      - catalogrule_rule
+  catalogrule_product_price:
+    product_id:
+      - catalogsearch_fulltext
+      - catalog_product_price
+  catalog_category_entity_datetime:
+    product_id:
+      - catalog_category_flat
+  catalog_product_entity_varchar:
+    product_id:
+      - catalogsearch_fulltext
+      - catalog_product_flat
+      - catalog_product_attribute
+      - catalogrule_product
+  catalog_product_bundle_selection:
+    parent_product_id:
+      - catalogsearch_fulltext
+  catalog_product_entity_int:
+    entity_id:
+      - catalogsearch_fulltext
+      - catalog_product_category
+      - catalog_product_flat
+      - catalog_product_price
+      - catalog_product_attribute
+      - cataloginventory_stock
+      - catalogrule_product
+  catalog_product_entity_gallery:
+    entity_id:
+      - catalog_product_flat
+  catalog_product_entity_datetime:
+    entity_id:
+      - catalogsearch_fulltext
+      - catalog_product_flat
+      - catalog_product_price
+      - catalogrule_product
+  catalog_product_entity_text:
+    entity_id:
+      - catalogsearch_fulltext
+      - catalog_product_flat
+      - catalogrule_product
+  catalog_category_entity_varchar:
+    entity_id:
+      - catalog_product_flat
+  catalog_product_entity_decimal:
+    entity_id:
+      - catalogsearch_fulltext
+      - catalog_product_flat
+      - catalog_product_price
+      - catalog_product_attribute
+      - catalogrule_product
+  catalog_category_entity:
+    entity_id:
+      - catalog_product_flat
+      - catalog_category_product
+  # grids

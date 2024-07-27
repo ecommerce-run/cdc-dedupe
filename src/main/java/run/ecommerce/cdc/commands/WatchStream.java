@@ -14,6 +14,7 @@ import org.springframework.shell.standard.ShellMethod;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
+import run.ecommerce.cdc.model.ConfigParser;
 import run.ecommerce.cdc.model.EnvPhp;
 import run.ecommerce.cdc.model.MviewXML;
 
@@ -24,17 +25,16 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @ShellComponent
-public class WatchStream extends BaseCommand {
+public class WatchStream {
 
-    final static int SOURCE_READ_COUNT = 100;
-    final static int SOURCE_READ_TIME = 1000;
+    protected Integer SOURCE_READ_COUNT;
+    protected Integer SOURCE_READ_TIME;
 
-    final static int DEDUPLICATION_SIZE = 10000;
-    final static Duration DEDUPLICATION_TIME = Duration.ofSeconds(5);
+    protected Integer DEDUPLICATION_SIZE;
+    protected Duration DEDUPLICATION_TIME;
 
-    final static int TARGET_BUFFER_SIZE = 1000;
-    final static Duration TARGET_BUFFER_TIME = Duration.ofSeconds(1);
-
+    protected Integer TARGET_BUFFER_SIZE;
+    protected Duration TARGET_BUFFER_TIME;
 
 
     private final ReactiveRedisOperations<String, String> redisOperations;
@@ -44,7 +44,6 @@ public class WatchStream extends BaseCommand {
             MviewXML mviewConfig,
             ReactiveRedisOperations<String, String> redisOperations,
             ReactiveRedisConnectionFactory reactiveRedisConnectionFactory) {
-        super(env, mviewConfig);
         this.redisOperations = redisOperations;
         this.reactiveRedisConnectionFactory = reactiveRedisConnectionFactory;
     }
@@ -54,32 +53,39 @@ public class WatchStream extends BaseCommand {
     protected String consumer = "";
     protected String targetPrefix = "target.";
 
+
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
-    public String generate(
-            @Option(longNames = {"cwd"}, defaultValue = "./") String cwd,
-            @Option(longNames = {"streamPrefix"}) String streamPrefix,
-            @Option(longNames = {"group"}) String group,
-            @Option(longNames = {"consumer"}) String consumer
+    public String watch(
+            @Option(longNames = {"config"}, shortNames = {'c'}, defaultValue = "./config.json") String config
     ) {
-        var initError = init(cwd);
-        if(initError != null) {
-            return initError;
-        }
+
+        var configObj = ConfigParser.loadConfig(config);
+
+        this.group = configObj.source().group();
+        this.consumer = configObj.source().consumer();
+
+        this.targetPrefix = configObj.target().prefix();
+
+        this.SOURCE_READ_COUNT = configObj.buffers().source().size();
+        this.SOURCE_READ_TIME = configObj.buffers().source().time();
+        this.DEDUPLICATION_SIZE = configObj.buffers().dedupe().size();
+        this.DEDUPLICATION_TIME = Duration.ofMillis(configObj.buffers().dedupe().time());
+        this.TARGET_BUFFER_SIZE = configObj.buffers().target().size();
+        this.TARGET_BUFFER_TIME = Duration.ofMillis(configObj.buffers().target().time());
 
         this.streamPrefix = streamPrefix;
         this.group = group;
         this.consumer = consumer;
 
-        var targetSinks = generateSinks(mviewConfig);
+        var targetSinks = generateSinks(configObj);
         var targetFluxes = generateTargetStreams(targetSinks);
         System.out.println("Starting...");
         for(var fluxRec: targetFluxes.entrySet()) {
             fluxRec.getValue().subscribe();
-            System.out.println("Started " + fluxRec.getKey());
         }
         System.out.println("Starting Redis Consumers");
-        var sourceFluxes = generateSourceStreamConsumers(targetSinks);
+        var sourceFluxes = generateSourceStreamConsumers(targetSinks, configObj);
         for (var fluxRec : sourceFluxes) {
             fluxRec.subscribe();
         }
@@ -95,12 +101,12 @@ public class WatchStream extends BaseCommand {
     /**
      * Prepare map of all the Skinks(Processing entry points) destinations
      *
-     * @param configuration {@link MviewXML}
+     * @param configuration {@link ConfigParser.Config}
      * @return {@link Map<String,Sinks.Many<UnifiedMessage>>}
      */
-    protected Map<String, Sinks.Many<UnifiedMessage>> generateSinks(MviewXML configuration) {
+    protected Map<String, Sinks.Many<UnifiedMessage>> generateSinks(ConfigParser.Config configuration) {
         var sinks = new HashMap<String, Sinks.Many<UnifiedMessage>>();
-        for (var processor: configuration.indexerMap.entrySet()) {
+        for (var processor: configuration.mapping().entrySet()) {
             Sinks.Many<UnifiedMessage> sink = Sinks.many().unicast().onBackpressureBuffer();
             sinks.put(processor.getKey(), sink);
         }
@@ -157,13 +163,14 @@ public class WatchStream extends BaseCommand {
      * Generate Source job pipelines that are passing data to Target pipelines.
      *
      * @param targetSinks map of all the target Sinks
+     * @param config
      * @return {@link List<Flux<UnifiedMessage>>} of source stream processors
      */
     protected List<Flux<UnifiedMessage>> generateSourceStreamConsumers(
-            Map<String, Sinks.Many<UnifiedMessage>> targetSinks
-    ) {
+            Map<String, Sinks.Many<UnifiedMessage>> targetSinks,
+            ConfigParser.Config config) {
         var streamConsumers = new ArrayList<Flux<UnifiedMessage>>();
-        for (var streamRecord: mviewConfig.storage.entrySet()) {
+        for (var streamRecord: config.mapping().entrySet()) {
 
             var streamName = streamPrefix + streamRecord.getKey();
             var fieldToMap = streamRecord.getValue().entrySet().stream().toList().getFirst().getKey();
@@ -182,7 +189,7 @@ public class WatchStream extends BaseCommand {
 
             Flux<MapRecord<String, String, String>> messages = receiver
                     .receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
-
+            System.out.println(streamRecord.getKey() + ": " );
             var unifiedFlux =  messages
                     .map( record -> {
                         var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
@@ -191,9 +198,9 @@ public class WatchStream extends BaseCommand {
                         return new UnifiedMessage(record.getId(), streamRecord.getKey(), (Integer) idToPass);
                     })
                     .map( record -> {
-                        for (var columRecordMap : mviewConfig.storage.get(streamRecord.getKey()).entrySet()){
+                        for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()){
                             for (var processorName: columRecordMap.getValue()) {
-                                var targetSink =targetSinks.get(processorName);
+                                var targetSink = targetSinks.get(processorName);
                                 var res =  targetSink.tryEmitNext(record);
                                 if (res.isSuccess()) {
                                 } else {
