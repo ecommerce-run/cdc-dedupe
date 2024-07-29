@@ -1,12 +1,14 @@
 package run.ecommerce.cdc;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.DisabledInNativeImage;
 import org.springframework.boot.test.context.SpringBootTest;
 import run.ecommerce.cdc.model.ConfigParser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @SpringBootTest
+@DisabledInNativeImage
 public class ConfigParserTests {
 
     @Test

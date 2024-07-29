@@ -16,7 +16,10 @@ WORKDIR /usr/src/app
 
 COPY . .
 
-RUN ./gradlew -Pagent test && ./gradlew nativeCompile
+
+RUN ./gradlew -Pagent test
+RUN ./gradlew metadataCopy --task test --dir src/main/resources/META-INF/native-image
+RUN ./gradlew nativeCompile
 
 # Second stage: Lightweight debian-slim image
 FROM debian:bookworm-slim
