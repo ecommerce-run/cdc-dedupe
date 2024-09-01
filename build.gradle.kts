@@ -47,6 +47,7 @@ dependencies {
     testImplementation("org.springframework.shell:spring-shell-starter-test")
     testImplementation("org.testcontainers:testcontainers")
     testImplementation("org.testcontainers:junit-jupiter")
+    testImplementation("com.redis.testcontainers:testcontainers-redis:1.6.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

@@ -40,8 +40,6 @@ public class WatchStream {
     private final ReactiveRedisOperations<String, String> redisOperations;
     private final ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
     WatchStream(
-            EnvPhp env,
-            MviewXML mviewConfig,
             ReactiveRedisOperations<String, String> redisOperations,
             ReactiveRedisConnectionFactory reactiveRedisConnectionFactory) {
         this.redisOperations = redisOperations;

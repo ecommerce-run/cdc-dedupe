@@ -1,56 +1,46 @@
 package run.ecommerce.cdc.commands;
 
 import jakarta.annotation.Resource;
+import lombok.SneakyThrows;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.shell.command.annotation.Option;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
 import org.springframework.util.StringUtils;
-import run.ecommerce.cdc.model.EnvPhp;
-import run.ecommerce.cdc.model.MviewXML;
+import run.ecommerce.cdc.model.ConfigParser;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.*;
 
 @ShellComponent
-public class DebeziumConfiguration extends BaseCommand {
-
-    DebeziumConfiguration(EnvPhp env, MviewXML mviewConfig) {
-        super(env, mviewConfig);
-    }
-
+public class DebeziumConfiguration  {
+    @SneakyThrows
     @ShellMethod(key = "generate", value = "generate debezium config")
     public String generate(
-            @Option(longNames = {"cwd"}, defaultValue = "./") String cwd
+            @Option(longNames = {"config"}, shortNames = {'c'},
+                    defaultValue = "./config.json") String config
     ) {
 
-        var initError = init(cwd);
-        if(initError != null) {
-            return initError;
-        }
-        try {
-            env.init(cwd);
-            mviewConfig.init(cwd);
-        } catch (IOException | InterruptedException e) {
-            return e.getMessage();
-        }
+        var configObj = ConfigParser.loadConfig(config);
 
-        var dbName = (String) env.getValueByPath("db/connection/default/dbname");
-        var dbUser = (String) env.getValueByPath("db/connection/default/username");
-        var dbPassword = (String) env.getValueByPath("db/connection/default/password");
+        var prefixSplit = configObj.source().prefix().split("\\.",3);
+        var topicPrefix = prefixSplit[0];
+        var dbName = prefixSplit[1];
+        var dbUser = "DB_USER";
+        var dbPassword = "DB_PASSWORD";
 
         List<String> watchTables = new ArrayList<>();
         List<String> watchColumns = new ArrayList<>();
-        for (var tableName : mviewConfig.storage.keySet()) {
+        for (var tableName : configObj.mapping().keySet()) {
             watchTables.add(dbName + "." + tableName);
-            for (var columnName : mviewConfig.storage.get(tableName).keySet()) {
+            for (var columnName : configObj.mapping().get(tableName).keySet()) {
                 watchColumns.add(dbName + "." + tableName + "." + columnName);
             }
         }
 
         Map<String, String> placeholders = new HashMap<>();
-        placeholders.put("DB_NAME", dbName);
+        placeholders.put("TOPIC_PREFIX", topicPrefix);
         placeholders.put("DB_USER", dbUser);
         placeholders.put("DB_PASSWORD", dbPassword);
         placeholders.put("DB_WATCH_TABLES",  String.join(",", watchTables));
@@ -60,7 +50,6 @@ public class DebeziumConfiguration extends BaseCommand {
 
         return replacePlaceholders(fileContent, placeholders);
     }
-
 
     @Resource
     private ResourceLoader resourceLoader;
