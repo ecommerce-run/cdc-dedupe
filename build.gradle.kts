@@ -1,8 +1,8 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.3.1"
-    id("io.spring.dependency-management") version "1.1.5"
-    id("org.hibernate.orm") version "6.5.2.Final"
+    id("org.springframework.boot") version "3.3.2"
+    id("io.spring.dependency-management") version "1.1.6"
+    id("org.hibernate.orm") version "6.6.0.Final"
     id("org.graalvm.buildtools.native") version "0.10.2"
 }
 
@@ -25,7 +25,7 @@ repositories {
     mavenCentral()
 }
 
-extra["springShellVersion"] = "3.3.1"
+extra["springShellVersion"] = "3.3.2"
 
 dependencies {
 //    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
@@ -45,6 +45,8 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
     testImplementation("org.springframework.shell:spring-shell-starter-test")
+    testImplementation("org.testcontainers:testcontainers")
+    testImplementation("org.testcontainers:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
