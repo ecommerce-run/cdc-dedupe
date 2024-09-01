@@ -54,15 +54,10 @@ public class DebeziumConfiguration  {
     @Resource
     private ResourceLoader resourceLoader;
 
-    public String readFileFromResources() {
+    public String readFileFromResources() throws IOException {
         var resource = resourceLoader.getResource("classpath:templates/debezium.properties");
-        try {
-            return Files.readString(resource.getFile().toPath());
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        return Files.readString(resource.getFile().toPath());
     }
-
 
     public String replacePlaceholders(String template, Map<String, String> placeholders) {
         for (Map.Entry<String, String> entry : placeholders.entrySet()) {

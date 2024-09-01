@@ -15,8 +15,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import run.ecommerce.cdc.model.ConfigParser;
-import run.ecommerce.cdc.model.EnvPhp;
-import run.ecommerce.cdc.model.MviewXML;
 
 import java.time.Duration;
 import java.util.*;
@@ -72,9 +70,6 @@ public class WatchStream {
         this.TARGET_BUFFER_SIZE = configObj.buffers().target().size();
         this.TARGET_BUFFER_TIME = Duration.ofMillis(configObj.buffers().target().time());
 
-        this.streamPrefix = streamPrefix;
-        this.group = group;
-        this.consumer = consumer;
 
         var targetSinks = generateSinks(configObj);
         var targetFluxes = generateTargetStreams(targetSinks);
@@ -97,10 +92,9 @@ public class WatchStream {
 
 
     /**
-     * Prepare map of all the Skinks(Processing entry points) destinations
+     * Prepare map of all the Sinks(Processing entry points) destinations
      *
      * @param configuration {@link ConfigParser.Config}
-     * @return {@link Map<String,Sinks.Many<UnifiedMessage>>}
      */
     protected Map<String, Sinks.Many<UnifiedMessage>> generateSinks(ConfigParser.Config configuration) {
         var sinks = new HashMap<String, Sinks.Many<UnifiedMessage>>();
@@ -133,9 +127,14 @@ public class WatchStream {
                     .map(recordList -> {
                         var nonDuplicateCollection = recordList.stream()
                                 .collect(Collectors.toMap(UnifiedMessage::targetId, Function.identity(), (a, b) -> a))
-                                .values();
+                                ;
+                        recordList.forEach(message -> {
+                            if (nonDuplicateCollection.get(message.targetId()) != message) {
+                                // send to acknowledgement flux;
+                            }
+                        });
 
-                        return nonDuplicateCollection;
+                        return nonDuplicateCollection.values();
                     })
                     .flatMap(Flux::fromIterable)
                     .bufferTimeout(TARGET_BUFFER_SIZE, TARGET_BUFFER_TIME)
@@ -161,8 +160,8 @@ public class WatchStream {
      * Generate Source job pipelines that are passing data to Target pipelines.
      *
      * @param targetSinks map of all the target Sinks
-     * @param config
-     * @return {@link List<Flux<UnifiedMessage>>} of source stream processors
+     * @param config config to pass to next flux
+     * @return list of source stream processors
      */
     protected List<Flux<UnifiedMessage>> generateSourceStreamConsumers(
             Map<String, Sinks.Many<UnifiedMessage>> targetSinks,
@@ -201,6 +200,7 @@ public class WatchStream {
                                 var targetSink = targetSinks.get(processorName);
                                 var res =  targetSink.tryEmitNext(record);
                                 if (res.isSuccess()) {
+                                    // sendto acknowledgement sync
                                 } else {
                                     System.out.println("Message NOT processed by target Flux: " + record);
                                 }
