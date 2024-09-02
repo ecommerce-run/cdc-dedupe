@@ -1,6 +1,7 @@
 package run.ecommerce.cdc.commands;
 
 
+import lombok.Setter;
 import lombok.SneakyThrows;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -49,7 +50,15 @@ public class WatchStream {
     protected String consumer = "";
     protected String targetPrefix = "target.";
 
+    @Setter
+    private CountDownLatch latch;
 
+    public CountDownLatch getLatch() {
+        if (latch == null) {
+            this.setLatch(new CountDownLatch(1));
+        }
+        return latch;
+    }
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
     public String watch(
@@ -85,8 +94,7 @@ public class WatchStream {
 
         System.out.println("Started");
 
-        CountDownLatch latch = new CountDownLatch(1);
-        latch.await();
+        getLatch().await();
         return "";
     }
 
@@ -115,7 +123,7 @@ public class WatchStream {
             var flux = sink.asFlux();
 
             var targetStreamName = targetPrefix+record.getKey();
-            //Create outgoing stream
+            // Create outgoing stream if not present already.
             redisOperations.opsForStream()
                     .add(targetStreamName,Map.of("ids","[]"))
                     .subscribe();
@@ -195,6 +203,7 @@ public class WatchStream {
                         return new UnifiedMessage(record.getId(), streamRecord.getKey(), (Integer) idToPass);
                     })
                     .map( record -> {
+                        // Send to Acknowledgement flux that there will be incoming
                         for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()){
                             for (var processorName: columRecordMap.getValue()) {
                                 var targetSink = targetSinks.get(processorName);
