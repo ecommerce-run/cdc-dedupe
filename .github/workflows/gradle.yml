@@ -22,7 +22,7 @@ jobs:
 
     steps:
     - name: install Redis
-      run: apt-get install redis
+      run: sudo apt-get install redis
 
     - uses: actions/checkout@v4
     # - name: Set up JDK 17
