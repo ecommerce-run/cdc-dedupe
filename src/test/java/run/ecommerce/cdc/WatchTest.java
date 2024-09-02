@@ -19,9 +19,7 @@ public class WatchTest {
     void testGenerateCommand() throws InterruptedException {
         String config = "./config.yaml";
 
-        // using external latch to terminate.
-        var latch = new CountDownLatch(1);
-        watchStream.setLatch(latch);
+        // Container for pressor
         var context = new Object() {
             String res;
         };
@@ -30,9 +28,13 @@ public class WatchTest {
         });
         job.start();
 
+        // Letting job run for 20 seconds, it has to do everything.
         Thread.sleep(20000);
-        latch.countDown();
-        Thread.sleep(500);
+        // using external latch to finish process
+        watchStream.latch.countDown();
+        Thread.sleep(50);
         assertNotNull(context.res);
+
+        // Assert processed data
     }
 }

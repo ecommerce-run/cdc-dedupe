@@ -4,11 +4,6 @@ package run.ecommerce.cdc.commands;
 import lombok.Setter;
 import lombok.SneakyThrows;
 import org.json.JSONArray;
-import org.json.JSONObject;
-import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
-import org.springframework.data.redis.connection.stream.*;
-import org.springframework.data.redis.core.ReactiveRedisOperations;
-import org.springframework.data.redis.stream.StreamReceiver;
 import org.springframework.shell.command.annotation.Option;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
@@ -16,6 +11,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
 import run.ecommerce.cdc.model.ConfigParser;
+import run.ecommerce.cdc.source.Redis;
 
 import java.time.Duration;
 import java.util.*;
@@ -28,43 +24,27 @@ public class WatchStream {
 
     protected Integer SOURCE_READ_COUNT;
     protected Integer SOURCE_READ_TIME;
-
     protected Integer DEDUPLICATION_SIZE;
     protected Duration DEDUPLICATION_TIME;
-
     protected Integer TARGET_BUFFER_SIZE;
     protected Duration TARGET_BUFFER_TIME;
-
-
-    private final ReactiveRedisOperations<String, String> redisOperations;
-    private final ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
-    WatchStream(
-            ReactiveRedisOperations<String, String> redisOperations,
-            ReactiveRedisConnectionFactory reactiveRedisConnectionFactory) {
-        this.redisOperations = redisOperations;
-        this.reactiveRedisConnectionFactory = reactiveRedisConnectionFactory;
-    }
-
     protected String streamPrefix = "";
     protected String group = "";
     protected String consumer = "";
     protected String targetPrefix = "target.";
 
-    @Setter
-    private CountDownLatch latch;
-
-    public CountDownLatch getLatch() {
-        if (latch == null) {
-            this.setLatch(new CountDownLatch(1));
-        }
-        return latch;
+    private final Redis redis;
+    public final CountDownLatch latch;
+    WatchStream(
+            Redis redis) {
+        this.redis = redis;
+        this.latch = new CountDownLatch(1);
     }
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
     public String watch(
             @Option(longNames = {"config"}, shortNames = {'c'}, defaultValue = "./config.json") String config
     ) {
-
         var configObj = ConfigParser.loadConfig(config);
 
         this.group = configObj.source().group();
@@ -94,7 +74,8 @@ public class WatchStream {
 
         System.out.println("Started");
 
-        getLatch().await();
+        this.latch.await();
+
         return "";
     }
 
@@ -124,7 +105,7 @@ public class WatchStream {
 
             var targetStreamName = targetPrefix+record.getKey();
             // Create outgoing stream if not present already.
-            redisOperations.opsForStream()
+            redis.operations.opsForStream()
                     .add(targetStreamName,Map.of("ids","[]"))
                     .subscribe();
 
@@ -153,7 +134,7 @@ public class WatchStream {
                                 .map(UnifiedMessage::targetId)
                                 .toList()
                         ).toString();
-                        redisOperations.opsForStream()
+                        redis.operations.opsForStream()
                                 .add(targetStreamName,Map.of("ids",ids))
                                 .subscribe();
                         return recordList;
@@ -180,28 +161,17 @@ public class WatchStream {
             var streamName = streamPrefix + streamRecord.getKey();
             var fieldToMap = streamRecord.getValue().entrySet().stream().toList().getFirst().getKey();
 
-            redisOperations.opsForStream().createGroup(streamName, ReadOffset.from("0-0"), group).subscribe();
+            var baseStream =
+                redis.getStream(streamName,fieldToMap,
+                    new Redis.Config(
+                        group,consumer,
+                        SOURCE_READ_TIME, SOURCE_READ_COUNT,
+                        SOURCE_READ_TIME, SOURCE_READ_COUNT, SOURCE_READ_TIME*10
+                    )
+                );
 
-            var consumerInstance = Consumer.from(group, consumer);
 
-            var options =
-                    StreamReceiver.StreamReceiverOptions.builder()
-                            .pollTimeout(Duration.ofMillis(SOURCE_READ_TIME))
-                            .batchSize(SOURCE_READ_COUNT)
-                            .build();
-
-            var receiver = StreamReceiver.create(reactiveRedisConnectionFactory, options);
-
-            Flux<MapRecord<String, String, String>> messages = receiver
-                    .receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
-            System.out.println(streamRecord.getKey() + ": " );
-            var unifiedFlux =  messages
-                    .map( record -> {
-                        var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
-                        var idToPass = value.getJSONObject("after").get(fieldToMap);
-
-                        return new UnifiedMessage(record.getId(), streamRecord.getKey(), (Integer) idToPass);
-                    })
+            var unifiedFlux =  baseStream
                     .map( record -> {
                         // Send to Acknowledgement flux that there will be incoming
                         for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()){
@@ -219,7 +189,7 @@ public class WatchStream {
                     })
                     .publishOn(Schedulers.boundedElastic())
                     .map(record -> {
-                        redisOperations.opsForStream().acknowledge(streamName, group, record.id()).subscribe();
+                        redis.operations.opsForStream().acknowledge(streamName, group, record.id()).subscribe();
                         return record;
                     });
 

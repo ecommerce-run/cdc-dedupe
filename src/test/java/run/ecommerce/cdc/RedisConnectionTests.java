@@ -2,7 +2,6 @@ package run.ecommerce.cdc;
 
 import com.redis.testcontainers.RedisContainer;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
