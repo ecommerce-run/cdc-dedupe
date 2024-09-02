@@ -23,8 +23,6 @@ public class RedisConnectionTests {
 
     @Test
     public void testRedisConnection() throws IOException, InterruptedException {
-
-        redis.start();
         // Get the Redis host and port
         var redisHost = redis.getHost();
         int redisPort = redis.getMappedPort(6379);
