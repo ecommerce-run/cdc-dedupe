@@ -69,13 +69,13 @@ jobs:
 
       - name: Build JVM image
         run: |
-          docker build -t image-jvm ./Dockerfile
+          docker build -t image-jvm -f ./Dockerfile .
           docker tag image-jvm ghcr.io/ecommerce-run/cdc-dedupe:latest-jvm
           docker push ghcr.io/ecommerce-run/cdc-dedupe:latest-jvm
 
       - name: Build Native image
         run: |
-          docker build -t image-native ./Dockerfile.native
+          docker build -t image-native -f ./Dockerfile.native .
           docker tag image-native ghcr.io/ecommerce-run/cdc-dedupe:latest
           docker push ghcr.io/ecommerce-run/cdc-dedupe:latest
 
