@@ -44,9 +44,6 @@ jobs:
 
     - name: Build with Gradle Wrapper
       run: ./gradlew build
-      
-    - name: Build Native with Gradle Wrapper
-      run: ./gradlew nativeCompile
 
     # NOTE: The Gradle Wrapper is the default and recommended way to run Gradle (https://docs.gradle.org/current/userguide/gradle_wrapper.html).
     # If your project does not have the Gradle Wrapper configured, you can use the following configuration to run Gradle with a specified version.
@@ -58,6 +55,23 @@ jobs:
     #
     # - name: Build with Gradle 8.5
     #   run: gradle build
+
+  package:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: install Redis
+        run: sudo apt-get install redis
+
+      - uses: actions/checkout@v4
+
+      - name: Build Native image
+        run: |
+          docker built -t image-native ./Dockerfile.native
+          docker tag image-native ghcr.io/ecommerce-run/cdc-dedupe:latest
+          docker push ghcr.io/ecommerce-run/cdc-dedupe:latest
 
   dependency-submission:
 
