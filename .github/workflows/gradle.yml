@@ -69,7 +69,7 @@ jobs:
 
       - name: Build Native image
         run: |
-          docker built -t image-native ./Dockerfile.native
+          docker build -t image-native ./Dockerfile.native
           docker tag image-native ghcr.io/ecommerce-run/cdc-dedupe:latest
           docker push ghcr.io/ecommerce-run/cdc-dedupe:latest
 
