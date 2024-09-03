@@ -67,6 +67,13 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Repo login
+        env:
+          REPO_USER: ${{ secrets.CDC_REPO_USER }}
+          REPO_PAT: ${{ secrets.CDC_REPO_PAT }}
+        run: |
+          echo $REPO_PAT | docker login ghcr.io -u $REPO_USER --password-stdin
+
       - name: Build JVM image
         run: |
           docker build -t image-jvm -f ./Dockerfile .
