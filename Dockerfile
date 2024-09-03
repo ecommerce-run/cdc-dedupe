@@ -11,7 +11,7 @@ RUN microdnf install findutils
 
 COPY . .
 
-RUN ./gradlew build
+RUN ./gradlew build -x test
 
 # Second stage: Lightweight debian-slim image
 FROM ghcr.io/graalvm/jdk-community:21

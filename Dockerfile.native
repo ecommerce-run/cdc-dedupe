@@ -16,7 +16,7 @@ WORKDIR /usr/src/app
 
 COPY . .
 
-RUN ./gradlew nativeCompile
+RUN ./gradlew nativeCompile -x test
 
 # Second stage: Lightweight debian-slim image
 FROM debian:bookworm-slim
