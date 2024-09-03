@@ -67,6 +67,12 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      - name: Build JVM image
+        run: |
+          docker build -t image-jvm ./Dockerfile
+          docker tag image-jvm ghcr.io/ecommerce-run/cdc-dedupe:latest-jvm
+          docker push ghcr.io/ecommerce-run/cdc-dedupe:latest-jvm
+
       - name: Build Native image
         run: |
           docker build -t image-native ./Dockerfile.native
