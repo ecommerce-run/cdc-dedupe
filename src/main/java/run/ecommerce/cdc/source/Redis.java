@@ -9,10 +9,13 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.core.ReactiveRedisOperations;
 import org.springframework.data.redis.stream.StreamReceiver;
 import org.springframework.stereotype.Component;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import run.ecommerce.cdc.commands.UnifiedMessage;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 
 @Component
 public class Redis {
@@ -32,7 +35,6 @@ public class Redis {
             ReactiveRedisConnectionFactory reactiveRedisConnectionFactory) {
         this.operations = redisOperations;
         this.reactiveRedisConnectionFactory = reactiveRedisConnectionFactory;
-
     }
 
     public Flux<UnifiedMessage> getStream(String streamName, String field, Config config) {
@@ -53,7 +55,6 @@ public class Redis {
         Flux<MapRecord<String, String, String>> messages = receiver
                 .receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
 
-
         var res = messages
                 .map( record -> {
                     var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
@@ -61,9 +62,6 @@ public class Redis {
 
                     return new UnifiedMessage(record.getId(), streamName, (Integer) idToPass);
                 });
-
         return res;
-
-
     }
 }

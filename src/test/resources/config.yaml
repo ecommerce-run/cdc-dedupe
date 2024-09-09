@@ -1,5 +1,6 @@
 ---
 source:
+  format: compact
   prefix: m2.m2.
   group: cdc
   consumer: cdc

@@ -21,6 +21,7 @@ public class ConfigParser {
     ) {}
 
     public record Source(
+            String format,
             String prefix,
             String group,
             String consumer,

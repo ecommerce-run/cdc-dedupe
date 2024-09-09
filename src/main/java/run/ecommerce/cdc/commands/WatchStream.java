@@ -34,17 +34,18 @@ public class WatchStream {
     protected String targetPrefix = "target.";
 
     private final Redis redis;
-    public final CountDownLatch latch;
+    public CountDownLatch latch;
     WatchStream(
             Redis redis) {
         this.redis = redis;
-        this.latch = new CountDownLatch(1);
+        this.latch = null;
     }
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
     public String watch(
             @Option(longNames = {"config"}, shortNames = {'c'}, defaultValue = "./config.json") String config
     ) {
+        latch = new CountDownLatch(1);
         var configObj = ConfigParser.loadConfig(config);
 
         this.group = configObj.source().group();
