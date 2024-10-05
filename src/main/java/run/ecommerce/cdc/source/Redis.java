@@ -39,6 +39,20 @@ public class Redis {
 
     public Flux<UnifiedMessage> getStream(String streamName, String field, Config config) {
 
+        var messages = getBaseStream(streamName, config);
+
+        var res = messages
+                .map( record -> {
+                    var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
+                    var idToPass = value.getJSONObject("after").get(field);
+
+                    return new UnifiedMessage(record.getId(), streamName, (Integer) idToPass);
+                });
+        return res;
+    }
+
+
+    public Flux<MapRecord<String, String, String>> getBaseStream(String streamName, Config config) {
         operations.opsForStream().createGroup(streamName, ReadOffset.from("0-0"), config.group).subscribe();
 
         var consumerInstance = Consumer.from(config.group, config.consumer);
@@ -52,16 +66,7 @@ public class Redis {
 
         var receiver = StreamReceiver.create(reactiveRedisConnectionFactory, options);
 
-        Flux<MapRecord<String, String, String>> messages = receiver
-                .receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
-
-        var res = messages
-                .map( record -> {
-                    var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
-                    var idToPass = value.getJSONObject("after").get(field);
-
-                    return new UnifiedMessage(record.getId(), streamName, (Integer) idToPass);
-                });
-        return res;
+        return receiver.receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
     }
+
 }

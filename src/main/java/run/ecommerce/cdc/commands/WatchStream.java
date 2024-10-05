@@ -1,12 +1,16 @@
 package run.ecommerce.cdc.commands;
 
 
+import io.lettuce.core.AbstractRedisAsyncCommands;
 import lombok.Setter;
 import lombok.SneakyThrows;
 import org.json.JSONArray;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.shell.command.annotation.Option;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import reactor.core.scheduler.Schedulers;
@@ -35,6 +39,9 @@ public class WatchStream {
 
     private final Redis redis;
     public CountDownLatch latch;
+    private Logger logger = LoggerFactory.getLogger(WatchStream.class);
+
+
     WatchStream(
             Redis redis) {
         this.redis = redis;
@@ -63,21 +70,28 @@ public class WatchStream {
 
         var targetSinks = generateSinks(configObj);
         var targetFluxes = generateTargetStreams(targetSinks);
-        System.out.println("Starting...");
-        for(var fluxRec: targetFluxes.entrySet()) {
-            fluxRec.getValue().subscribe();
-        }
-        System.out.println("Starting Redis Consumers");
-        var sourceFluxes = generateSourceStreamConsumers(targetSinks, configObj);
-        for (var fluxRec : sourceFluxes) {
-            fluxRec.subscribe();
-        }
 
-        System.out.println("Started");
+        logger.info("Starting Producers");
+        var targetDisposables = new ArrayList<Disposable>();
+        targetFluxes.forEach((key,target) -> {
+            targetDisposables.add(target.subscribe());
+        });
+
+        logger.info("Starting Consumers");
+        var sourceDisposables = new ArrayList<Disposable>();
+        var sourceFluxes = generateSourceStreamConsumers(targetSinks, configObj);
+        sourceFluxes.forEach( source -> sourceDisposables.add(source.subscribe()));
+
+        logger.info("Started");
 
         this.latch.await();
 
-        return "";
+        logger.info("Shutting down");
+//        sourceDisposables.forEach(Disposable::dispose);
+//        targetDisposables.forEach(Disposable::dispose);
+        logger.info("Stopped");
+
+        return "Finished";
     }
 
 
@@ -195,8 +209,6 @@ public class WatchStream {
                     });
 
             streamConsumers.add(unifiedFlux);
-            var msg = "Watching stream " + streamName + " in group " + group + " with consumer " + consumer;
-            System.out.println(msg);
         }
         return streamConsumers;
     }

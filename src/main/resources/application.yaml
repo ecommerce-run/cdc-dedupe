@@ -23,4 +23,4 @@ spring:
         database: ${TARGET_REDIS_DB:0}
 logging:
   level:
-    root: off
+    root: ${LOG_LEVEL:info}
