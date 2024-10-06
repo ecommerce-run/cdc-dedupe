@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
 @Testcontainers
-public class WatchTest {
+public class WatchTests {
 
     @Autowired
     private WatchStream watchStream;
@@ -101,20 +101,21 @@ public class WatchTest {
         // wait till application is ready
         watchStream.ready.await();
 
+        Thread.sleep(2000);
         // push in data into redis
         var sourceOps = watchStream.redisSource.operations.opsForStream();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":4},\"after\":{\"entity_id\":1}}")
-        ).block();
+                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":4},\"after\":{\"entity_id\":1,\"v\":4}}")
+        ).subscribe();
         sourceOps.add("m2.m2.catalog_category_entity",
                 Map.of("key","{\"before\":{\"entity_id\":1,\"v\":3},\"after\":{\"entity_id\":2}}")
-        ).block();
+        ).subscribe();
         sourceOps.add("m2.m2.catalog_category_entity",
                 Map.of("key","{\"before\":{\"entity_id\":1,\"v\":2},\"after\":{\"entity_id\":1}}")
-        ).block();
+        ).subscribe();
         sourceOps.add("m2.m2.catalog_category_entity",
                 Map.of("key","{\"before\":{\"entity_id\":1,\"v\":1},\"after\":{\"entity_id\":2}}")
-        ).block();
+        ).subscribe();
 
         // Let it run for some time
         Thread.sleep(16000);
@@ -139,6 +140,10 @@ public class WatchTest {
         assertNotEquals(0, itemsList.size());
         assertNotEquals(1, itemsList.size());
 
+        var sourceList = sourceOps.read(StreamOffset.fromStart("m2.m2.catalog_category_entity"))
+                .collectList().block();
+        assertNotNull(sourceList);
+        assertEquals(0, sourceList.size());
 
         assertNotNull(context.res);
     }

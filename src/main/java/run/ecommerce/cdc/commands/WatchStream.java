@@ -39,13 +39,15 @@ public class WatchStream {
     protected String group = "";
     protected String consumer = "";
     protected String targetPrefix = "target.";
+    protected Boolean deleteAfterAck = false;
 
     public final RedisTarget redisTarget;
     public final RedisSource redisSource;
     public CountDownLatch ready = new CountDownLatch(1);
     public CountDownLatch gracefulShutdown;
     private final Logger logger = LoggerFactory.getLogger(WatchStream.class);
-
+    private final Sinks.EmitFailureHandler emitFailureHandler = (signalType, emitResult) -> emitResult
+            .equals(Sinks.EmitResult.FAIL_NON_SERIALIZED);
 
     WatchStream(
             RedisSource redisSource,
@@ -60,11 +62,16 @@ public class WatchStream {
     public String watch(
             @Option(longNames = {"config"}, shortNames = {'c'}, defaultValue = "./config.json") String config
     ) {
+
         gracefulShutdown = new CountDownLatch(1);
         var configObj = ConfigParser.loadConfig(config);
 
         this.group = configObj.source().group();
         this.consumer = configObj.source().consumer();
+        if (configObj.source().acknowledge().equals("delete")) {
+            this.deleteAfterAck = true;
+        }
+
         this.sourcePrefix = configObj.source().prefix();
         this.targetPrefix = configObj.target().prefix();
 
@@ -164,44 +171,52 @@ public class WatchStream {
             var flux = sink.asFlux();
             var streamName = hmRecord.getKey();
 
-            var ackFlux = flux.doOnNext(unifiedMessage -> {
-                    })
+            var ackFlux = flux
                     // delay 3 times writing buffers.
-                    .delayElements(TARGET_BUFFER_TIME.plus(TARGET_BUFFER_TIME).plus(TARGET_BUFFER_TIME))
-                    .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
+                    .delayElements(TARGET_BUFFER_TIME)
+                    .map( message -> {
+                        var lastCount = ackStorage.get(message.source()).get(message.id()).decrementAndGet();
+                        return Map.entry(message, lastCount);
+                    })
+                    .filter(el -> {
+                        logger.debug("CNT " + el.getValue() +": " + el.getKey());
+                        return el.getValue().equals(0);
+                    })
+                    .map(Map.Entry::getKey)
+                    .bufferTimeout(TARGET_BUFFER_SIZE, TARGET_BUFFER_TIME)
                     .map(listOfMessages -> {
 
-                        var acknowledgeMessages = listOfMessages.stream()
-                                .map(el -> {
-                                    var processingCountdown = ackStorage.get(el.source()).get(el.id()).decrementAndGet();
-                                    return Map.<RecordId,Integer>entry(el.id(), processingCountdown);
-                                });
 
-                        var recordIds = acknowledgeMessages
-                                .filter(el -> el.getValue() == 0)
-                                .map(Map.Entry::getKey)
+                        var recordIds = listOfMessages
+                                .stream()
+                                .map(UnifiedMessage::id)
                                 .toArray(RecordId[]::new);
-
-                        // no messages to acknowledge
-                        if (recordIds.length == 0) {
-                            return Mono.just(listOfMessages);
-                        }
 
                         var ackResult = redisSource.operations.opsForStream()
                                 .acknowledge(streamName, group, recordIds);
 
-                        return ackResult.map(res -> {
-                            Arrays.stream(recordIds)
-                                .forEach( recordId -> {
-                                    ackStorage.get(streamName).remove(recordId);
-                                    logger.debug("Acknowledged " + streamName + " message: " + recordId.toString());
-                                });
-                            return recordIds;
-                        }).thenReturn(listOfMessages);
+                        return ackResult.thenReturn(listOfMessages);
+                    })
+                    .flatMap(Function.identity())
+                    .map(listOfMessages -> {
+                        if (deleteAfterAck) {
+                            var recordIds = listOfMessages
+                                    .stream()
+                                    .map(UnifiedMessage::id)
+                                    .toArray(RecordId[]::new);
+
+                            var deleted = redisSource.operations.opsForStream()
+                                    .delete(streamName, recordIds);
+
+                            return deleted.thenReturn(listOfMessages);
+                        }
+                        return Mono.just(listOfMessages);
                     })
                     .flatMap(Function.identity())
                     .flatMap(Flux::fromIterable)
                     .map(message -> {
+                        ackStorage.get(message.source()).remove(message.id());
+                        logger.debug("DONE:  " + message);
                         return message;
                     });
             fluxes.put(hmRecord.getKey(), ackFlux);
@@ -245,6 +260,7 @@ public class WatchStream {
 
             var targetFlux = flux
                     .doOnNext(unifiedMessage -> {
+
                     })
                     .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
                     .map(recordList -> {
@@ -252,7 +268,7 @@ public class WatchStream {
                                 .collect(Collectors.toMap(UnifiedMessage::entityId, Function.identity(), (a, b) -> a));
                         recordList.forEach(message -> {
                             if (!nonDuplicateCollection.get(message.entityId()).equals(message)) {
-                                ackSinks.get(message.source()).tryEmitNext(message);
+                                ackSinks.get(message.source()).emitNext(message, emitFailureHandler);
                             }
                         });
 
@@ -273,8 +289,8 @@ public class WatchStream {
                     .flatMap(Function.identity())
                     .flatMap(Flux::fromIterable)
                     .map(message -> {
-                        ackSinks.get(message.source()).tryEmitNext(message);
-                        logger.debug("Processed " + message.toString(), message);
+                        ackSinks.get(message.source()).emitNext(message, emitFailureHandler);
+                        logger.debug("Processed "+ targetStreamName + " m " + message);
                         return message;
                     });
             fluxes.put(hmRecord.getKey(), targetFlux);
@@ -325,12 +341,7 @@ public class WatchStream {
                         for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()) {
                             for (var processorName : columRecordMap.getValue()) {
                                 var targetSink = targetSinks.get(processorName);
-                                var res = targetSink.tryEmitNext(record);
-                                if (res.isSuccess()) {
-                                    // sendto acknowledgement sync
-                                } else {
-                                    logger.error("Message NOT processed by target Flux: " + record);
-                                }
+                                targetSink.emitNext(record, emitFailureHandler);
                             }
                         }
                         return record;

@@ -10,4 +10,5 @@ spring:
       enabled: true
 logging:
   level:
-    root: ${LOG_LEVEL:warn}
+    root: warn
+    run.ecommerce: ${LOG_LEVEL:info}

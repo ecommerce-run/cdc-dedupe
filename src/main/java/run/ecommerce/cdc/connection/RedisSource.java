@@ -61,6 +61,9 @@ public class RedisSource {
         var messages = getBaseStream(streamName, config);
 
         var res = messages
+                .doOnNext(message -> {
+                    logger.debug("Received " + streamName + ": " + message );
+                })
                 .map( record -> {
                     var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
                     var idToPass = value.getJSONObject("after").get(field);

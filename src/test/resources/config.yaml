@@ -4,6 +4,7 @@ source:
   prefix: m2.m2.
   group: cdc
   consumer: cdc
+  acknowledge: delete
   connection:
     host: 127.0.0.1
     port: '6389'

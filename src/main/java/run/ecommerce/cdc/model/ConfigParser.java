@@ -25,8 +25,14 @@ public class ConfigParser {
             String prefix,
             String group,
             String consumer,
+            String acknowledge,
             Connection connection
-    ) {}
+    ) {
+        @Override
+        public String acknowledge() {
+            return acknowledge == null ? "simple" : acknowledge;
+        }
+    }
 
     public record Connection(
             String host,
