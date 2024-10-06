@@ -75,7 +75,7 @@ public class WatchTest {
 
         itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_product_flat"))
                 .collectList().block();
-        
+
         assertNotNull(itemsList);
         assertNotNull(itemsList.getFirst());
         targetOps.delete("target.catalog_product_flat", itemsList.getFirst().getId()).block();
