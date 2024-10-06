@@ -1,21 +1,20 @@
 package run.ecommerce.cdc.commands;
 
 
-import io.lettuce.core.AbstractRedisAsyncCommands;
-import lombok.Setter;
 import lombok.SneakyThrows;
 import org.json.JSONArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.shell.command.annotation.Option;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
-import reactor.core.scheduler.Schedulers;
+import run.ecommerce.cdc.connection.RedisTarget;
 import run.ecommerce.cdc.model.ConfigParser;
-import run.ecommerce.cdc.source.Redis;
+import run.ecommerce.cdc.connection.RedisSource;
 
 import java.time.Duration;
 import java.util.*;
@@ -37,27 +36,31 @@ public class WatchStream {
     protected String consumer = "";
     protected String targetPrefix = "target.";
 
-    private final Redis redis;
-    public CountDownLatch latch;
+    public final RedisTarget redisTarget;
+    public final RedisSource redisSource;
+    public CountDownLatch ready = new CountDownLatch(1);
+    public CountDownLatch gracefulShutdown;
     private Logger logger = LoggerFactory.getLogger(WatchStream.class);
 
 
     WatchStream(
-            Redis redis) {
-        this.redis = redis;
-        this.latch = null;
+            RedisSource redisSource,
+            RedisTarget redisTarget) {
+        this.redisSource = redisSource;
+        this.redisTarget = redisTarget;
+        this.gracefulShutdown = null;
     }
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
     public String watch(
             @Option(longNames = {"config"}, shortNames = {'c'}, defaultValue = "./config.json") String config
     ) {
-        latch = new CountDownLatch(1);
+        gracefulShutdown = new CountDownLatch(1);
         var configObj = ConfigParser.loadConfig(config);
 
         this.group = configObj.source().group();
         this.consumer = configObj.source().consumer();
-
+        this.streamPrefix = configObj.source().prefix();
         this.targetPrefix = configObj.target().prefix();
 
         this.SOURCE_READ_COUNT = configObj.buffers().source().size();
@@ -67,6 +70,19 @@ public class WatchStream {
         this.TARGET_BUFFER_SIZE = configObj.buffers().target().size();
         this.TARGET_BUFFER_TIME = Duration.ofMillis(configObj.buffers().target().time());
 
+        var sourceRedis = new RedisStandaloneConfiguration(
+                configObj.source().connection().host(),
+                configObj.source().connection().port()
+        );
+        sourceRedis.setDatabase(configObj.source().connection().db());
+        this.redisSource.configure(sourceRedis);
+
+        var targetRedis = new RedisStandaloneConfiguration(
+                configObj.target().connection().host(),
+                configObj.target().connection().port()
+        );
+        targetRedis.setDatabase(configObj.target().connection().db());
+        this.redisTarget.configure(targetRedis);
 
         var targetSinks = generateSinks(configObj);
         var targetFluxes = generateTargetStreams(targetSinks);
@@ -83,15 +99,16 @@ public class WatchStream {
         sourceFluxes.forEach( source -> sourceDisposables.add(source.subscribe()));
 
         logger.info("Started");
+        ready.countDown();
 
-        this.latch.await();
+        gracefulShutdown.await();
 
         logger.info("Shutting down");
-//        sourceDisposables.forEach(Disposable::dispose);
-//        targetDisposables.forEach(Disposable::dispose);
+        sourceDisposables.forEach(Disposable::dispose);
+        targetDisposables.forEach(Disposable::dispose);
         logger.info("Stopped");
 
-        return "Finished";
+        return "";
     }
 
 
@@ -102,10 +119,18 @@ public class WatchStream {
      */
     protected Map<String, Sinks.Many<UnifiedMessage>> generateSinks(ConfigParser.Config configuration) {
         var sinks = new HashMap<String, Sinks.Many<UnifiedMessage>>();
-        for (var processor: configuration.mapping().entrySet()) {
+
+        var targetNames = new HashSet<String>();
+        configuration.mapping().forEach((source,columns) -> {
+            columns.forEach( (key,targetNamesForColumn) -> {
+                targetNames.addAll(targetNamesForColumn);
+            });
+        });
+
+        targetNames.forEach(targetName -> {
             Sinks.Many<UnifiedMessage> sink = Sinks.many().unicast().onBackpressureBuffer();
-            sinks.put(processor.getKey(), sink);
-        }
+            sinks.put(targetName, sink);
+        });
         return sinks;
     }
 
@@ -120,9 +145,9 @@ public class WatchStream {
 
             var targetStreamName = targetPrefix+record.getKey();
             // Create outgoing stream if not present already.
-            redis.operations.opsForStream()
+            redisTarget.operations.opsForStream()
                     .add(targetStreamName,Map.of("ids","[]"))
-                    .subscribe();
+                    .block();
 
             var targetFlux = flux
                     .doOnNext(unifiedMessage -> {
@@ -142,14 +167,13 @@ public class WatchStream {
                     })
                     .flatMap(Flux::fromIterable)
                     .bufferTimeout(TARGET_BUFFER_SIZE, TARGET_BUFFER_TIME)
-                    .publishOn(Schedulers.boundedElastic())
                     .map(recordList -> {
                         var ids = new JSONArray(
                             recordList.stream()
                                 .map(UnifiedMessage::targetId)
                                 .toList()
                         ).toString();
-                        redis.operations.opsForStream()
+                        redisTarget.operations.opsForStream()
                                 .add(targetStreamName,Map.of("ids",ids))
                                 .subscribe();
                         return recordList;
@@ -177,8 +201,8 @@ public class WatchStream {
             var fieldToMap = streamRecord.getValue().entrySet().stream().toList().getFirst().getKey();
 
             var baseStream =
-                redis.getStream(streamName,fieldToMap,
-                    new Redis.Config(
+                redisSource.getStream(streamName,fieldToMap,
+                    new RedisSource.Config(
                         group,consumer,
                         SOURCE_READ_TIME, SOURCE_READ_COUNT,
                         SOURCE_READ_TIME, SOURCE_READ_COUNT, SOURCE_READ_TIME*10
@@ -202,9 +226,8 @@ public class WatchStream {
                         }
                         return record;
                     })
-                    .publishOn(Schedulers.boundedElastic())
                     .map(record -> {
-                        redis.operations.opsForStream().acknowledge(streamName, group, record.id()).subscribe();
+                        redisSource.operations.opsForStream().acknowledge(streamName, group, record.id()).subscribe();
                         return record;
                     });
 

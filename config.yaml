@@ -19,11 +19,11 @@ buffers:
     size: 1000
     time: 1000
 target:
-  prefix: m2.m2.
+  prefix: target.
   connection:
     host: 127.0.0.1
     port: '6389'
-    db: '2'
+    db: '1'
 mapping:
   # Indexers source table, column to pass to target, target.
   cataloginventory_stock_item:

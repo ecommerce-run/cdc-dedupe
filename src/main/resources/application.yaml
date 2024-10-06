@@ -2,25 +2,12 @@ spring:
   main:
     banner-mode: off
   application:
-    name: cdc
+    name: cdc-dedupe
   shell:
     interactive:
       enabled: true
     script:
       enabled: true
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      database: ${REDIS_DB:0}
-      source:
-        host: ${SOURCE_REDIS_HOST:localhost}
-        port: ${SOURCE_REDIS_PORT:6379}
-        database: ${SOURCE_REDIS_DB:0}
-      target:
-        host: ${TARGET_REDIS_HOST:localhost}
-        port: ${TARGET_REDIS_PORT:6379}
-        database: ${TARGET_REDIS_DB:0}
 logging:
   level:
     root: ${LOG_LEVEL:info}
