@@ -26,10 +26,6 @@ public class RedisConnectionTests {
         var redisHost = redis.getHost();
         int redisPort = redis.getMappedPort(6379);
 
-        // Set the Redis connection properties
-        System.setProperty("spring.redis.host", redisHost);
-        System.setProperty("spring.redis.port", String.valueOf(redisPort));
-
         // Trigger a shell command to test the Redis connection
         var process = Runtime.getRuntime().exec("redis-cli -h " + redisHost + " -p " + redisPort + " ping");
         process.waitFor();

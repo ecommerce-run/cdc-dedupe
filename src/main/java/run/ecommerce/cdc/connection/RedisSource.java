@@ -1,5 +1,6 @@
 package run.ecommerce.cdc.connection;
 
+import jakarta.annotation.PreDestroy;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +35,9 @@ public class RedisSource {
     }
 
     public ReactiveRedisOperations<String, String> operations;
-    protected ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
+    public ReactiveRedisConnectionFactory factory;
+    protected LettuceConnectionFactory _factory;
+
     RedisSource() {
     }
 
@@ -43,8 +46,15 @@ public class RedisSource {
         var factory = new LettuceConnectionFactory(configuration);
         factory.start();
         this.operations = new ReactiveStringRedisTemplate(factory);
-        this.reactiveRedisConnectionFactory = factory;
+        this.factory = factory;
+        this._factory = factory;
     }
+
+    @PreDestroy
+    public void destroy() {
+        _factory.destroy();
+    }
+
 
     public Flux<UnifiedMessage> getStream(String streamName, String field, Config config) {
 
@@ -79,7 +89,7 @@ public class RedisSource {
                         .build();
 
 
-        var receiver = StreamReceiver.create(reactiveRedisConnectionFactory, options);
+        var receiver = StreamReceiver.create(factory, options);
 
         return receiver.receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
     }

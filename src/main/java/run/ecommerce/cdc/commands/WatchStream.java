@@ -6,6 +6,7 @@ import org.json.JSONArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.shell.command.annotation.Option;
 import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
@@ -19,7 +20,9 @@ import run.ecommerce.cdc.model.ConfigParser;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -32,7 +35,7 @@ public class WatchStream {
     protected Duration DEDUPLICATION_TIME;
     protected Integer TARGET_BUFFER_SIZE;
     protected Duration TARGET_BUFFER_TIME;
-    protected String streamPrefix = "";
+    protected String sourcePrefix = "";
     protected String group = "";
     protected String consumer = "";
     protected String targetPrefix = "target.";
@@ -62,7 +65,7 @@ public class WatchStream {
 
         this.group = configObj.source().group();
         this.consumer = configObj.source().consumer();
-        this.streamPrefix = configObj.source().prefix();
+        this.sourcePrefix = configObj.source().prefix();
         this.targetPrefix = configObj.target().prefix();
 
         this.SOURCE_READ_COUNT = configObj.buffers().source().size();
@@ -86,19 +89,22 @@ public class WatchStream {
         targetRedis.setDatabase(configObj.target().connection().db());
         this.redisTarget.configure(targetRedis);
 
-        var targetSinks = generateSinks(configObj);
-        var targetFluxes = generateTargetStreams(targetSinks);
-
+        logger.info("Starting Acknowledgement Streams");
+        var ackSinks = generateAckSinks(configObj);
+        var ackStorage = storageOfInFlight(configObj);
+        var ackFluxes = generateAckStreams(ackSinks, ackStorage);
+        var ackDisposables = new ArrayList<Disposable>();
+        ackFluxes.forEach((key, ack) -> ackDisposables.add(ack.subscribe()));
 
         logger.info("Starting Producers");
+        var targetSinks = generateSinks(configObj);
+        var targetFluxes = generateTargetStreams(targetSinks, ackSinks);
         var targetDisposables = new ArrayList<Disposable>();
-        targetFluxes.forEach((key, target) -> {
-            targetDisposables.add(target.subscribe());
-        });
+        targetFluxes.forEach((key, target) -> targetDisposables.add(target.subscribe()));
 
         logger.info("Starting Consumers");
         var sourceDisposables = new ArrayList<Disposable>();
-        var sourceFluxes = generateSourceStreamConsumers(targetSinks, configObj);
+        var sourceFluxes = generateSourceStreamConsumers(targetSinks, configObj, ackStorage);
         sourceFluxes.forEach(source -> sourceDisposables.add(source.subscribe()));
 
         logger.info("Started");
@@ -109,7 +115,9 @@ public class WatchStream {
         logger.info("Shutting down");
         sourceDisposables.forEach(Disposable::dispose);
         targetDisposables.forEach(Disposable::dispose);
+        ackDisposables.forEach(Disposable::dispose);
         logger.info("Stopped");
+
 
         return "";
     }
@@ -125,9 +133,7 @@ public class WatchStream {
 
         var targetNames = new HashSet<String>();
         configuration.mapping().forEach((source, columns) -> {
-            columns.forEach((key, targetNamesForColumn) -> {
-                targetNames.addAll(targetNamesForColumn);
-            });
+            columns.forEach((key, targetNamesForColumn) -> targetNames.addAll(targetNamesForColumn));
         });
 
         targetNames.forEach(targetName -> {
@@ -137,16 +143,101 @@ public class WatchStream {
         return sinks;
     }
 
+    protected Map<String, Sinks.Many<UnifiedMessage>> generateAckSinks(ConfigParser.Config configuration) {
+        var sinks = new HashMap<String, Sinks.Many<UnifiedMessage>>();
 
-    protected Map<String, Flux<UnifiedMessage>> generateTargetStreams(
-            Map<String, Sinks.Many<UnifiedMessage>> sinks
+        configuration.mapping().forEach((source, columns) -> {
+            Sinks.Many<UnifiedMessage> sink = Sinks.many().unicast().onBackpressureBuffer();
+            sinks.put(configuration.source().prefix() + source, sink);
+        });
+
+        return sinks;
+    }
+
+    protected Map<String, Flux<UnifiedMessage>> generateAckStreams(
+            Map<String, Sinks.Many<UnifiedMessage>> sinks,
+            Map<String,Map<RecordId, AtomicInteger>> ackStorage
     ) {
         var fluxes = new HashMap<String, Flux<UnifiedMessage>>();
-        for (var record : sinks.entrySet()) {
-            var sink = sinks.get(record.getKey());
+        for (var hmRecord : sinks.entrySet()) {
+            var sink = sinks.get(hmRecord.getKey());
+            var flux = sink.asFlux();
+            var streamName = hmRecord.getKey();
+
+            var ackFlux = flux.doOnNext(unifiedMessage -> {
+                    })
+                    // delay 3 times writing buffers.
+                    .delayElements(TARGET_BUFFER_TIME.plus(TARGET_BUFFER_TIME).plus(TARGET_BUFFER_TIME))
+                    .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
+                    .map(listOfMessages -> {
+
+                        var acknowledgeMessages = listOfMessages.stream()
+                                .map(el -> {
+                                    var processingCountdown = ackStorage.get(el.source()).get(el.id()).decrementAndGet();
+                                    return Map.<RecordId,Integer>entry(el.id(), processingCountdown);
+                                });
+
+                        var recordIds = acknowledgeMessages
+                                .filter(el -> el.getValue() == 0)
+                                .map(Map.Entry::getKey)
+                                .toArray(RecordId[]::new);
+
+                        // no messages to acknowledge
+                        if (recordIds.length == 0) {
+                            return Mono.just(listOfMessages);
+                        }
+
+                        var ackResult = redisSource.operations.opsForStream()
+                                .acknowledge(streamName, group, recordIds);
+
+                        return ackResult.map(res -> {
+                            Arrays.stream(recordIds)
+                                .forEach( recordId -> {
+                                    ackStorage.get(streamName).remove(recordId);
+                                    logger.debug("Acknowledged " + streamName + " message: " + recordId.toString());
+                                });
+                            return recordIds;
+                        }).thenReturn(listOfMessages);
+                    })
+                    .flatMap(Function.identity())
+                    .flatMap(Flux::fromIterable)
+                    .map(message -> {
+                        return message;
+                    });
+            fluxes.put(hmRecord.getKey(), ackFlux);
+        }
+        return fluxes;
+    }
+
+    protected Map<String,Map<RecordId, AtomicInteger>> storageOfInFlight(ConfigParser.Config configuration) {
+        var countDowns = new HashMap<String,Map<RecordId, AtomicInteger>>();
+
+        configuration.mapping().forEach((source, columns) -> {
+            var single = new ConcurrentHashMap<RecordId, AtomicInteger>();
+            countDowns.put(configuration.source().prefix() + source, single);
+        });
+
+        return countDowns;
+    }
+
+
+    /**
+     * Creating deduplication fluxes.
+     *
+     * @param sinks    sinks of that will receive new messages.
+     * @param ackSinks sicks for acknowledgement.
+     * @return Map of processor fluxes
+     */
+    protected Map<String, Flux<UnifiedMessage>> generateTargetStreams(
+            Map<String, Sinks.Many<UnifiedMessage>> sinks,
+            Map<String, Sinks.Many<UnifiedMessage>> ackSinks
+    ) {
+        var fluxes = new HashMap<String, Flux<UnifiedMessage>>();
+        for (var hmRecord : sinks.entrySet()) {
+            var sink = sinks.get(hmRecord.getKey());
             var flux = sink.asFlux();
 
-            var targetStreamName = targetPrefix + record.getKey();
+            var targetStreamName = targetPrefix + hmRecord.getKey();
             // Create outgoing stream if not present already.
             redisTarget.operations.opsForStream()
                     .add(targetStreamName, Map.of("ids", "[]"))
@@ -160,8 +251,8 @@ public class WatchStream {
                         var nonDuplicateCollection = recordList.stream()
                                 .collect(Collectors.toMap(UnifiedMessage::entityId, Function.identity(), (a, b) -> a));
                         recordList.forEach(message -> {
-                            if (nonDuplicateCollection.get(message.entityId()) != message) {
-                                // send to acknowledgement flux;
+                            if (!nonDuplicateCollection.get(message.entityId()).equals(message)) {
+                                ackSinks.get(message.source()).tryEmitNext(message);
                             }
                         });
 
@@ -182,10 +273,11 @@ public class WatchStream {
                     .flatMap(Function.identity())
                     .flatMap(Flux::fromIterable)
                     .map(message -> {
-                        logger.debug(message.toString());
+                        ackSinks.get(message.source()).tryEmitNext(message);
+                        logger.debug("Processed " + message.toString(), message);
                         return message;
                     });
-            fluxes.put(record.getKey(), targetFlux);
+            fluxes.put(hmRecord.getKey(), targetFlux);
         }
         return fluxes;
     }
@@ -195,15 +287,18 @@ public class WatchStream {
      *
      * @param targetSinks map of all the target Sinks
      * @param config      config to pass to next flux
+     * @param ackStorage  storage
      * @return list of source stream processors
      */
     protected List<Flux<UnifiedMessage>> generateSourceStreamConsumers(
             Map<String, Sinks.Many<UnifiedMessage>> targetSinks,
-            ConfigParser.Config config) {
+            ConfigParser.Config config,
+            Map<String,Map<RecordId, AtomicInteger>> ackStorage
+    ) {
         var streamConsumers = new ArrayList<Flux<UnifiedMessage>>();
         for (var streamRecord : config.mapping().entrySet()) {
 
-            var streamName = streamPrefix + streamRecord.getKey();
+            var streamName = sourcePrefix + streamRecord.getKey();
             var fieldToMap = streamRecord.getValue().entrySet().stream().toList().getFirst().getKey();
 
             var baseStream =
@@ -215,9 +310,17 @@ public class WatchStream {
                             )
                     );
 
-
             var unifiedFlux = baseStream
                     .map(record -> {
+                        // set expectation of processing.
+                        var processors = config.mapping()
+                                .get(streamRecord.getKey()).values()
+                                .stream()
+                                .map(List::size)
+                                .reduce(0, Integer::sum);
+                        ackStorage.get(record.source())
+                                .put(record.id(), new AtomicInteger(processors));
+
                         // Send to Acknowledgement flux that there will be incoming
                         for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()) {
                             for (var processorName : columRecordMap.getValue()) {
@@ -226,14 +329,14 @@ public class WatchStream {
                                 if (res.isSuccess()) {
                                     // sendto acknowledgement sync
                                 } else {
-                                    System.out.println("Message NOT processed by target Flux: " + record);
+                                    logger.error("Message NOT processed by target Flux: " + record);
                                 }
                             }
                         }
                         return record;
                     })
                     .map(record -> {
-                        redisSource.operations.opsForStream().acknowledge(streamName, group, record.id()).subscribe();
+                        logger.debug("Received " + record.toString(), record);
                         return record;
                     });
 

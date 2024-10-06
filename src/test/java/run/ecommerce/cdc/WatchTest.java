@@ -10,14 +10,12 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import run.ecommerce.cdc.commands.WatchStream;
-import run.ecommerce.cdc.connection.RedisSource;
 
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -66,13 +64,21 @@ public class WatchTest {
         watchStream.gracefulShutdown.countDown();
 
         var targetOps = watchStream.redisTarget.operations.opsForStream();
-        var ItemsList= targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
+        var itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
                 .collectList().block();
 
-        assertNotNull(ItemsList);
-        assertEquals(1, ItemsList.size());
+        assertNotNull(itemsList);
+        assertEquals(1, itemsList.size());
+        assertNotNull(itemsList.getFirst());
 
-        targetOps.delete("target.catalog_category_product", ItemsList.getFirst().getId()).block();
+        targetOps.delete("target.catalog_category_product", itemsList.getFirst().getId()).block();
+
+        itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_product_flat"))
+                .collectList().block();
+        
+        assertNotNull(itemsList);
+        assertNotNull(itemsList.getFirst());
+        targetOps.delete("target.catalog_product_flat", itemsList.getFirst().getId()).block();
 
         job.join();
         assertNotNull(context.res);
@@ -98,29 +104,41 @@ public class WatchTest {
         // push in data into redis
         var sourceOps = watchStream.redisSource.operations.opsForStream();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1},\"after\":{\"entity_id\":1}}")
+                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":4},\"after\":{\"entity_id\":1}}")
         ).block();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1},\"after\":{\"entity_id\":1}}")
+                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":3},\"after\":{\"entity_id\":2}}")
         ).block();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1},\"after\":{\"entity_id\":2}}")
+                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":2},\"after\":{\"entity_id\":1}}")
+        ).block();
+        sourceOps.add("m2.m2.catalog_category_entity",
+                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":1},\"after\":{\"entity_id\":2}}")
         ).block();
 
-        // Let it run for 15 seconds.
-        Thread.sleep(15000);
+        // Let it run for some time
+        Thread.sleep(16000);
+
         // we can shut down safely
         watchStream.gracefulShutdown.countDown();
         job.join();
 
         // check that we got what we want to get
         var targetOps = watchStream.redisTarget.operations.opsForStream();
-        var ItemsList= targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
+        var itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
                 .collectList().block();
 
-        assertNotNull(ItemsList);
-        assertNotEquals(0, ItemsList.size());
-        assertNotEquals(1, ItemsList.size());
+        assertNotNull(itemsList);
+        assertNotEquals(0, itemsList.size());
+        assertNotEquals(1, itemsList.size());
+
+        itemsList = targetOps.read(StreamOffset.fromStart("target.catalog_product_flat"))
+                .collectList().block();
+
+        assertNotNull(itemsList);
+        assertNotEquals(0, itemsList.size());
+        assertNotEquals(1, itemsList.size());
+
 
         assertNotNull(context.res);
     }

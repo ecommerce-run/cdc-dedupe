@@ -1,6 +1,7 @@
 package run.ecommerce.cdc.connection;
 
 
+import jakarta.annotation.PreDestroy;
 import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -15,7 +16,8 @@ public class RedisTarget {
 
 
     public ReactiveRedisOperations<String, String> operations;
-    protected ReactiveRedisConnectionFactory reactiveRedisConnectionFactory;
+    protected ReactiveRedisConnectionFactory factory;
+    protected LettuceConnectionFactory _factory;
     RedisTarget() {
     }
 
@@ -23,7 +25,11 @@ public class RedisTarget {
         var factory = new LettuceConnectionFactory(configuration);
         factory.start();
         this.operations = new ReactiveStringRedisTemplate(factory);
-        this.reactiveRedisConnectionFactory = factory;
+        this._factory = factory;
     }
 
+    @PreDestroy
+    public void destroy() {
+        _factory.destroy();
+    }
 }

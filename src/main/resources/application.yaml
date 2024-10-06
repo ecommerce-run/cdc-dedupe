@@ -10,4 +10,4 @@ spring:
       enabled: true
 logging:
   level:
-    root: ${LOG_LEVEL:info}
+    root: ${LOG_LEVEL:warn}
