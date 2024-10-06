@@ -41,7 +41,7 @@ public class WatchStream {
     public final RedisSource redisSource;
     public CountDownLatch ready = new CountDownLatch(1);
     public CountDownLatch gracefulShutdown;
-    private Logger logger = LoggerFactory.getLogger(WatchStream.class);
+    private final Logger logger = LoggerFactory.getLogger(WatchStream.class);
 
 
     WatchStream(
@@ -88,6 +88,7 @@ public class WatchStream {
 
         var targetSinks = generateSinks(configObj);
         var targetFluxes = generateTargetStreams(targetSinks);
+
 
         logger.info("Starting Producers");
         var targetDisposables = new ArrayList<Disposable>();
@@ -151,15 +152,15 @@ public class WatchStream {
                     .add(targetStreamName, Map.of("ids", "[]"))
                     .block();
 
-            var targetFlux = Flux.from(flux
+            var targetFlux = flux
                     .doOnNext(unifiedMessage -> {
                     })
                     .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
                     .map(recordList -> {
                         var nonDuplicateCollection = recordList.stream()
-                                .collect(Collectors.toMap(UnifiedMessage::targetId, Function.identity(), (a, b) -> a));
+                                .collect(Collectors.toMap(UnifiedMessage::entityId, Function.identity(), (a, b) -> a));
                         recordList.forEach(message -> {
-                            if (nonDuplicateCollection.get(message.targetId()) != message) {
+                            if (nonDuplicateCollection.get(message.entityId()) != message) {
                                 // send to acknowledgement flux;
                             }
                         });
@@ -171,7 +172,7 @@ public class WatchStream {
                     .map(recordList -> {
                         var ids = new JSONArray(
                                 recordList.stream()
-                                        .map(UnifiedMessage::targetId)
+                                        .map(UnifiedMessage::entityId)
                                         .toList()
                         ).toString();
                         return redisTarget.operations.opsForStream()
@@ -183,8 +184,7 @@ public class WatchStream {
                     .map(message -> {
                         logger.debug(message.toString());
                         return message;
-                    })
-            );
+                    });
             fluxes.put(record.getKey(), targetFlux);
         }
         return fluxes;
