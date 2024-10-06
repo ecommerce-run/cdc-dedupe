@@ -11,10 +11,11 @@ import org.springframework.shell.standard.ShellComponent;
 import org.springframework.shell.standard.ShellMethod;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import run.ecommerce.cdc.connection.RedisSource;
 import run.ecommerce.cdc.connection.RedisTarget;
 import run.ecommerce.cdc.model.ConfigParser;
-import run.ecommerce.cdc.connection.RedisSource;
 
 import java.time.Duration;
 import java.util.*;
@@ -50,6 +51,7 @@ public class WatchStream {
         this.redisTarget = redisTarget;
         this.gracefulShutdown = null;
     }
+
     @SneakyThrows
     @ShellMethod(key = "watch", value = "Watch stream")
     public String watch(
@@ -89,14 +91,14 @@ public class WatchStream {
 
         logger.info("Starting Producers");
         var targetDisposables = new ArrayList<Disposable>();
-        targetFluxes.forEach((key,target) -> {
+        targetFluxes.forEach((key, target) -> {
             targetDisposables.add(target.subscribe());
         });
 
         logger.info("Starting Consumers");
         var sourceDisposables = new ArrayList<Disposable>();
         var sourceFluxes = generateSourceStreamConsumers(targetSinks, configObj);
-        sourceFluxes.forEach( source -> sourceDisposables.add(source.subscribe()));
+        sourceFluxes.forEach(source -> sourceDisposables.add(source.subscribe()));
 
         logger.info("Started");
         ready.countDown();
@@ -121,8 +123,8 @@ public class WatchStream {
         var sinks = new HashMap<String, Sinks.Many<UnifiedMessage>>();
 
         var targetNames = new HashSet<String>();
-        configuration.mapping().forEach((source,columns) -> {
-            columns.forEach( (key,targetNamesForColumn) -> {
+        configuration.mapping().forEach((source, columns) -> {
+            columns.forEach((key, targetNamesForColumn) -> {
                 targetNames.addAll(targetNamesForColumn);
             });
         });
@@ -135,28 +137,27 @@ public class WatchStream {
     }
 
 
-    protected Map<String,Flux<UnifiedMessage>> generateTargetStreams(
+    protected Map<String, Flux<UnifiedMessage>> generateTargetStreams(
             Map<String, Sinks.Many<UnifiedMessage>> sinks
     ) {
-        var fluxes = new HashMap<String,Flux<UnifiedMessage>>();
-        for (var record: sinks.entrySet()) {
+        var fluxes = new HashMap<String, Flux<UnifiedMessage>>();
+        for (var record : sinks.entrySet()) {
             var sink = sinks.get(record.getKey());
             var flux = sink.asFlux();
 
-            var targetStreamName = targetPrefix+record.getKey();
+            var targetStreamName = targetPrefix + record.getKey();
             // Create outgoing stream if not present already.
             redisTarget.operations.opsForStream()
-                    .add(targetStreamName,Map.of("ids","[]"))
+                    .add(targetStreamName, Map.of("ids", "[]"))
                     .block();
 
-            var targetFlux = flux
+            var targetFlux = Flux.from(flux
                     .doOnNext(unifiedMessage -> {
                     })
                     .bufferTimeout(DEDUPLICATION_SIZE, DEDUPLICATION_TIME)
                     .map(recordList -> {
                         var nonDuplicateCollection = recordList.stream()
-                                .collect(Collectors.toMap(UnifiedMessage::targetId, Function.identity(), (a, b) -> a))
-                                ;
+                                .collect(Collectors.toMap(UnifiedMessage::targetId, Function.identity(), (a, b) -> a));
                         recordList.forEach(message -> {
                             if (nonDuplicateCollection.get(message.targetId()) != message) {
                                 // send to acknowledgement flux;
@@ -169,16 +170,21 @@ public class WatchStream {
                     .bufferTimeout(TARGET_BUFFER_SIZE, TARGET_BUFFER_TIME)
                     .map(recordList -> {
                         var ids = new JSONArray(
-                            recordList.stream()
-                                .map(UnifiedMessage::targetId)
-                                .toList()
+                                recordList.stream()
+                                        .map(UnifiedMessage::targetId)
+                                        .toList()
                         ).toString();
-                        redisTarget.operations.opsForStream()
-                                .add(targetStreamName,Map.of("ids",ids))
-                                .subscribe();
-                        return recordList;
+                        return redisTarget.operations.opsForStream()
+                                .add(targetStreamName, Map.of("ids", ids))
+                                .then(Mono.just(recordList));
                     })
-                    .flatMap(Flux::fromIterable);
+                    .flatMap(Function.identity())
+                    .flatMap(Flux::fromIterable)
+                    .map(message -> {
+                        logger.debug(message.toString());
+                        return message;
+                    })
+            );
             fluxes.put(record.getKey(), targetFlux);
         }
         return fluxes;
@@ -188,35 +194,35 @@ public class WatchStream {
      * Generate Source job pipelines that are passing data to Target pipelines.
      *
      * @param targetSinks map of all the target Sinks
-     * @param config config to pass to next flux
+     * @param config      config to pass to next flux
      * @return list of source stream processors
      */
     protected List<Flux<UnifiedMessage>> generateSourceStreamConsumers(
             Map<String, Sinks.Many<UnifiedMessage>> targetSinks,
             ConfigParser.Config config) {
         var streamConsumers = new ArrayList<Flux<UnifiedMessage>>();
-        for (var streamRecord: config.mapping().entrySet()) {
+        for (var streamRecord : config.mapping().entrySet()) {
 
             var streamName = streamPrefix + streamRecord.getKey();
             var fieldToMap = streamRecord.getValue().entrySet().stream().toList().getFirst().getKey();
 
             var baseStream =
-                redisSource.getStream(streamName,fieldToMap,
-                    new RedisSource.Config(
-                        group,consumer,
-                        SOURCE_READ_TIME, SOURCE_READ_COUNT,
-                        SOURCE_READ_TIME, SOURCE_READ_COUNT, SOURCE_READ_TIME*10
-                    )
-                );
+                    redisSource.getStream(streamName, fieldToMap,
+                            new RedisSource.Config(
+                                    group, consumer,
+                                    SOURCE_READ_TIME, SOURCE_READ_COUNT,
+                                    SOURCE_READ_TIME, SOURCE_READ_COUNT, SOURCE_READ_TIME * 10
+                            )
+                    );
 
 
-            var unifiedFlux =  baseStream
-                    .map( record -> {
+            var unifiedFlux = baseStream
+                    .map(record -> {
                         // Send to Acknowledgement flux that there will be incoming
-                        for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()){
-                            for (var processorName: columRecordMap.getValue()) {
+                        for (var columRecordMap : config.mapping().get(streamRecord.getKey()).entrySet()) {
+                            for (var processorName : columRecordMap.getValue()) {
                                 var targetSink = targetSinks.get(processorName);
-                                var res =  targetSink.tryEmitNext(record);
+                                var res = targetSink.tryEmitNext(record);
                                 if (res.isSuccess()) {
                                     // sendto acknowledgement sync
                                 } else {
