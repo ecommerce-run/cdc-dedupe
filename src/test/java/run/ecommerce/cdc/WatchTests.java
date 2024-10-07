@@ -10,6 +10,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import run.ecommerce.cdc.commands.WatchStream;
+import run.ecommerce.cdc.connection.RedisSource;
+import run.ecommerce.cdc.connection.RedisTarget;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -25,6 +27,12 @@ public class WatchTests {
 
     @Autowired
     private WatchStream watchStream;
+
+    @Autowired
+    private RedisSource redisSource;
+
+    @Autowired
+    private RedisTarget redisTarget;
 
     @Container
     private static final RedisContainer redisContainer = new RedisContainer(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
@@ -64,7 +72,7 @@ public class WatchTests {
         watchStream.gracefulShutdown.countDown();
 
         var targetOps = watchStream.redisTarget.operations.opsForStream();
-        var itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
+        var itemsList = targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
                 .collectList().block();
 
         assertNotNull(itemsList);
@@ -73,7 +81,7 @@ public class WatchTests {
 
         targetOps.delete("target.catalog_category_product", itemsList.getFirst().getId()).block();
 
-        itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_product_flat"))
+        itemsList = targetOps.read(StreamOffset.fromStart("target.catalog_product_flat"))
                 .collectList().block();
 
         assertNotNull(itemsList);
@@ -103,18 +111,18 @@ public class WatchTests {
 
         Thread.sleep(2000);
         // push in data into redis
-        var sourceOps = watchStream.redisSource.operations.opsForStream();
+        var sourceOps = redisSource.operations.opsForStream();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":4},\"after\":{\"entity_id\":1,\"v\":4}}")
+                Map.of("key", "{\"before\":{\"entity_id\":1,\"v\":4},\"after\":{\"entity_id\":1,\"v\":4}}")
         ).subscribe();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":3},\"after\":{\"entity_id\":2}}")
+                Map.of("key", "{\"before\":{\"entity_id\":1,\"v\":3},\"after\":{\"entity_id\":2}}")
         ).subscribe();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":2},\"after\":{\"entity_id\":1}}")
+                Map.of("key", "{\"before\":{\"entity_id\":1,\"v\":2},\"after\":{\"entity_id\":1}}")
         ).subscribe();
         sourceOps.add("m2.m2.catalog_category_entity",
-                Map.of("key","{\"before\":{\"entity_id\":1,\"v\":1},\"after\":{\"entity_id\":2}}")
+                Map.of("key", "{\"before\":{\"entity_id\":1,\"v\":1},\"after\":{\"entity_id\":2}}")
         ).subscribe();
 
         // Let it run for some time
@@ -125,8 +133,8 @@ public class WatchTests {
         job.join();
 
         // check that we got what we want to get
-        var targetOps = watchStream.redisTarget.operations.opsForStream();
-        var itemsList= targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
+        var targetOps = redisTarget.operations.opsForStream();
+        var itemsList = targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
                 .collectList().block();
 
         assertNotNull(itemsList);
@@ -144,6 +152,100 @@ public class WatchTests {
                 .collectList().block();
         assertNotNull(sourceList);
         assertEquals(0, sourceList.size());
+
+        assertNotNull(context.res);
+    }
+
+    protected void prepareExtendedConfig(String inputFile, String outputFile) throws IOException {
+
+        String replaceHostFrom = "host: 127.0.0.1";
+        String replaceHostTo = "host: " + redisContainer.getHost();
+
+        String replacePortFrom = "port: '6389'";
+        String replacePortTo = "port: " + redisContainer.getFirstMappedPort();
+        String content = new String(Files.readAllBytes(Paths.get(inputFile)));
+        content = content.replace(replaceHostFrom, replaceHostTo);
+        content = content.replace(replacePortFrom, replacePortTo);
+        content = content.replace("acknowledge: delete", "acknowledge: simple");
+        content = content.replace("format: compact", "format: extended");
+        FileWriter writer = new FileWriter(outputFile);
+        writer.write(content);
+        writer.close();
+
+    }
+
+    @Test
+    void testWatchCommandDeduplicateExtended() throws InterruptedException, IOException {
+        String template = "./config.yaml";
+        String configFile = "./config_watch_dedupe.yaml";
+        prepareExtendedConfig(template, configFile);
+
+        // Container for pressor
+        var context = new Object() {
+            String res;
+        };
+
+        var job = new Thread(() -> context.res = watchStream.watch(configFile));
+        job.start();
+
+        // wait till application is ready
+        watchStream.ready.await();
+
+        Thread.sleep(2000);
+        // push in data into redis
+        var sourceOps = redisSource.operations.opsForStream();
+        sourceOps.add("m2.m2.catalog_category_entity",
+                Map.of(
+                        "key", "{}",
+                        "value", "{\"before\":{\"entity_id\":1,\"v\":4},\"after\":{\"entity_id\":1,\"v\":4}}"
+                )
+        ).subscribe();
+        sourceOps.add("m2.m2.catalog_category_entity",
+                Map.of(
+                        "key", "{}",
+                        "value", "{\"before\":{\"entity_id\":1,\"v\":3},\"after\":{\"entity_id\":2}}"
+                )
+        ).subscribe();
+        sourceOps.add("m2.m2.catalog_category_entity",
+                Map.of(
+                        "key", "{}",
+                        "value", "{\"before\":{\"entity_id\":1,\"v\":2},\"after\":{\"entity_id\":1}}"
+                )
+        ).subscribe();
+        sourceOps.add("m2.m2.catalog_category_entity",
+                Map.of(
+                        "key", "{}",
+                        "value", "{\"before\":{\"entity_id\":1,\"v\":1},\"after\":{\"entity_id\":2}}"
+                )
+        ).subscribe();
+
+        // Let it run for some time
+        Thread.sleep(16000);
+
+        // we can shut down safely
+        watchStream.gracefulShutdown.countDown();
+        job.join();
+
+        // check that we got what we want to get
+        var targetOps = redisTarget.operations.opsForStream();
+        var itemsList = targetOps.read(StreamOffset.fromStart("target.catalog_category_product"))
+                .collectList().block();
+
+        assertNotNull(itemsList);
+        assertNotEquals(0, itemsList.size());
+        assertNotEquals(1, itemsList.size());
+
+        itemsList = targetOps.read(StreamOffset.fromStart("target.catalog_product_flat"))
+                .collectList().block();
+
+        assertNotNull(itemsList);
+        assertNotEquals(0, itemsList.size());
+        assertNotEquals(1, itemsList.size());
+
+        var sourceList = sourceOps.read(StreamOffset.fromStart("m2.m2.catalog_category_entity"))
+                .collectList().block();
+        assertNotNull(sourceList);
+        assertEquals(4, sourceList.size());
 
         assertNotNull(context.res);
     }

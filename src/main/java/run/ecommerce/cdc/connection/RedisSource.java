@@ -1,10 +1,9 @@
 package run.ecommerce.cdc.connection;
 
-import jakarta.annotation.PreDestroy;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.connection.RedisConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.connection.stream.Consumer;
@@ -23,7 +22,7 @@ import run.ecommerce.cdc.commands.WatchStream;
 import java.time.Duration;
 
 @Component
-public class RedisSource {
+public class RedisSource implements SmartLifecycle {
 
     private final Logger logger = LoggerFactory.getLogger(WatchStream.class);
 
@@ -35,7 +34,6 @@ public class RedisSource {
     }
 
     public ReactiveRedisOperations<String, String> operations;
-    public ReactiveRedisConnectionFactory factory;
     protected LettuceConnectionFactory _factory;
 
     RedisSource() {
@@ -44,17 +42,9 @@ public class RedisSource {
 
     public void configure(RedisConfiguration configuration) {
         var factory = new LettuceConnectionFactory(configuration);
-        factory.start();
         this.operations = new ReactiveStringRedisTemplate(factory);
-        this.factory = factory;
         this._factory = factory;
     }
-
-    @PreDestroy
-    public void destroy() {
-        _factory.destroy();
-    }
-
 
     public Flux<UnifiedMessage> getStream(String streamName, String field, Config config) {
 
@@ -65,7 +55,12 @@ public class RedisSource {
                     logger.debug("Received " + streamName + ": " + message );
                 })
                 .map( record -> {
-                    var value = new JSONObject(record.getValue().entrySet().stream().toList().getFirst().getValue());
+                    var compactFormat = record.getValue().size() == 1;
+                    var valueStr =
+                            compactFormat ?
+                            record.getValue().entrySet().stream().findFirst().get().getValue() :
+                            record.getValue().get("value");
+                    var value = new JSONObject(valueStr);
                     var idToPass = value.getJSONObject("after").get(field);
 
                     return new UnifiedMessage(record.getId(), streamName, (Integer) idToPass);
@@ -92,9 +87,29 @@ public class RedisSource {
                         .build();
 
 
-        var receiver = StreamReceiver.create(factory, options);
+        var receiver = StreamReceiver.create(_factory, options);
 
         return receiver.receive(consumerInstance, StreamOffset.create(streamName, ReadOffset.lastConsumed()));
+    }
+
+    @Override
+    public void start() {
+        _factory.start();
+    }
+
+    @Override
+    public boolean isAutoStartup() {
+        return false;
+    }
+
+    @Override
+    public void stop() {
+        _factory.stop();
+    }
+
+    @Override
+    public boolean isRunning() {
+        return _factory != null && _factory.isRunning();
     }
 
 }

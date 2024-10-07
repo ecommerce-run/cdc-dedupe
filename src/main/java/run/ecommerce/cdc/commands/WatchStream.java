@@ -68,9 +68,7 @@ public class WatchStream {
 
         this.group = configObj.source().group();
         this.consumer = configObj.source().consumer();
-        if (configObj.source().acknowledge().equals("delete")) {
-            this.deleteAfterAck = true;
-        }
+        this.deleteAfterAck = configObj.source().acknowledge().equals("delete");
 
         this.sourcePrefix = configObj.source().prefix();
         this.targetPrefix = configObj.target().prefix();
@@ -88,6 +86,7 @@ public class WatchStream {
         );
         sourceRedis.setDatabase(configObj.source().connection().db());
         this.redisSource.configure(sourceRedis);
+        this.redisSource.start();
 
         var targetRedis = new RedisStandaloneConfiguration(
                 configObj.target().connection().host(),
@@ -95,6 +94,7 @@ public class WatchStream {
         );
         targetRedis.setDatabase(configObj.target().connection().db());
         this.redisTarget.configure(targetRedis);
+        this.redisTarget.start();
 
         logger.info("Starting Acknowledgement Streams");
         var ackSinks = generateAckSinks(configObj);
@@ -121,10 +121,16 @@ public class WatchStream {
 
         logger.info("Shutting down");
         sourceDisposables.forEach(Disposable::dispose);
+        var toProcess = 1;
+        while (toProcess > 0) {
+            Thread.sleep(TARGET_BUFFER_TIME);
+            toProcess = ackStorage.values().stream().map(Map::size).reduce(0,Integer::sum);
+        }
         targetDisposables.forEach(Disposable::dispose);
         ackDisposables.forEach(Disposable::dispose);
+//        redisTarget.stop();
+//        redisSource.stop();
         logger.info("Stopped");
-
 
         return "";
     }
@@ -173,7 +179,7 @@ public class WatchStream {
 
             var ackFlux = flux
                     // delay 3 times writing buffers.
-                    .delayElements(TARGET_BUFFER_TIME)
+                    .delaySequence(TARGET_BUFFER_TIME)
                     .map( message -> {
                         var lastCount = ackStorage.get(message.source()).get(message.id()).decrementAndGet();
                         return Map.entry(message, lastCount);

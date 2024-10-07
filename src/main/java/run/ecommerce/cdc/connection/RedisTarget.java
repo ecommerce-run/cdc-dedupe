@@ -1,8 +1,6 @@
 package run.ecommerce.cdc.connection;
 
-
-import jakarta.annotation.PreDestroy;
-import org.springframework.data.redis.connection.ReactiveRedisConnectionFactory;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.data.redis.connection.RedisConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 
@@ -12,24 +10,40 @@ import org.springframework.stereotype.Component;
 
 
 @Component
-public class RedisTarget {
+public class RedisTarget implements SmartLifecycle {
 
+
+    protected RedisConfiguration configuration;
 
     public ReactiveRedisOperations<String, String> operations;
-    protected ReactiveRedisConnectionFactory factory;
     protected LettuceConnectionFactory _factory;
     RedisTarget() {
     }
 
     public void configure(RedisConfiguration configuration) {
+        this.configuration = configuration;
         var factory = new LettuceConnectionFactory(configuration);
-        factory.start();
         this.operations = new ReactiveStringRedisTemplate(factory);
         this._factory = factory;
     }
 
-    @PreDestroy
-    public void destroy() {
-        _factory.destroy();
+    @Override
+    public void start() {
+        _factory.start();
+    }
+
+    @Override
+    public boolean isAutoStartup() {
+        return false;
+    }
+
+    @Override
+    public void stop() {
+        _factory.stop();
+    }
+
+    @Override
+    public boolean isRunning() {
+        return _factory != null && _factory.isRunning();
     }
 }
