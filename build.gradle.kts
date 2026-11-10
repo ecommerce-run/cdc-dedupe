@@ -33,7 +33,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
 //    implementation("org.springframework.boot:spring-boot-starter-webflux")
     implementation("org.springframework.shell:spring-shell-starter")
-    implementation("org.json:json:20240303")
+    implementation("org.json:json:20260719")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 
     implementation("com.fasterxml.jackson.core:jackson-databind")
